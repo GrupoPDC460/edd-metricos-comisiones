@@ -7,24 +7,24 @@
   const fPad = { equipo: '', supervisor: '', q: '', estado: 'activos' };
   A.vistas.padron = function (root, args) {
     const tab = args[0] || 'personas';
-    root.append(h('div', { class: 'cab' }, h('div', null, h('h1', null, 'Padrón y equipos'), h('p', null, 'Gestores con su equipo, supervisor, fecha de ingreso, teléfono de WhatsApp y base de comisión. Desactivar a alguien no borra su historial.')),
-      h('div', { class: 'acciones' }, U.btn('+ Agregar persona', () => modalPersona(null), 'primario'), U.btn('+ Agregar equipo', () => modalEquipo(null)))));
+    root.append(U.cabecera('Gestores', 'Padrón, supervisión, equipo, comisión y contacto. Desactivar a alguien no borra su historial.', U.btn('＋ Agregar equipo', () => modalEquipo(null)), U.btn('＋ Agregar gestor', () => modalPersona(null), 'primario')));
     root.append(U.pestanas([{ k: 'personas', t: 'Personas (' + E.db.personas.size + ')' }, { k: 'equipos', t: 'Equipos (' + E.db.equipos.size + ')' }], tab, k => { location.hash = '#/padron/' + k; }));
     if (tab === 'equipos') return pintarEquipos(root);
     const cuerpo = h('div');
-    root.append(U.filtros(fPad, pintar, U.campo('Estado', U.select([{ v: 'activos', t: 'Activos' }, { v: 'inactivos', t: 'Inactivos' }, { v: 'todos', t: 'Todos' }], fPad.estado, v => { fPad.estado = v; pintar(); }))), cuerpo);
+    root.append(U.filtros(fPad, pintar, U.select([{ v: 'activos', t: 'Activos' }, { v: 'inactivos', t: 'Inactivos' }, { v: 'todos', t: 'Todos' }], fPad.estado, v => { fPad.estado = v; pintar(); }, { 'aria-label': 'Estado' })), cuerpo);
     pintar();
     function pintar() {
       const cfg = E.conf();
       cuerpo.innerHTML = '';
       const ps = U.filtrar(E.personas(false), fPad).filter(p => fPad.estado === 'todos' || (fPad.estado === 'activos' ? p.d.activo !== false : p.d.activo === false));
-      cuerpo.append(U.tabla([{ t: 'Código' }, { t: 'Nombre' }, { t: 'Equipo' }, { t: 'Supervisor' }, { t: 'Ingreso' }, { t: 'WhatsApp' }, { t: 'Base', cls: 'num' }, { t: 'Estado' }],
+      cuerpo.append(h('div', { class: 'hoja', style: { padding: '8px 12px' } }, U.tabla([{ t: 'Gestor' }, { t: 'Código' }, { t: 'Supervisor' }, { t: 'Equipo' }, { t: 'Ingreso' }, { t: 'WhatsApp' }, { t: 'Base comisión', cls: 'num' }, { t: 'Estado' }],
         ps.map(p => h('tr', { class: 'clic' + (p.d.activo === false ? ' inactiva' : ''), onclick: () => modalPersona(p) },
-          h('td', null, p.d.codigo || '—'), h('td', null, h('span', { class: 'nombre' }, p.d.nombre), h('span', { class: 'sub' }, (p.d.rol || '') + (p.d.es_supervisor ? ' · tiene equipo a cargo' : ''))),
-          h('td', null, U.nombreEquipo(p.d.equipo_id)), h('td', null, E.supervisorDe(p) || '—'), h('td', null, p.d.fecha_ingreso ? E.fechaCorta(p.d.fecha_ingreso) : h('span', { class: 'chip proceso' }, 'Sin fecha')),
+          h('td', null, U.persona(p, (p.d.rol || '') + (p.d.es_supervisor ? ' · tiene equipo a cargo' : ''))), h('td', null, p.d.codigo || '—'),
+          h('td', null, E.supervisorDe(p) || '—'), h('td', null, U.equipoPill(p.d.equipo_id)), h('td', null, p.d.fecha_ingreso ? E.fechaCorta(p.d.fecha_ingreso) : h('span', { class: 'chip proceso' }, 'Sin fecha')),
           h('td', null, p.d.telefono_wa || h('span', { class: 'muted' }, '—')),
           h('td', { class: 'num' }, E.comisiona(p) ? (p.d.base_comision != null && p.d.base_comision !== '' ? E.q(p.d.base_comision) : h('span', { class: 'muted', title: 'Base predeterminada' }, E.q(cfg.base_default))) : h('span', { class: 'muted peq' }, 'No comisiona')),
-          h('td', null, p.d.activo === false ? h('span', { class: 'chip sin' }, 'Inactivo') : h('span', { class: 'chip cerrado' }, 'Activo'))))));
+          h('td', null, p.d.activo === false ? h('span', { class: 'chip sin' }, 'Inactivo') : h('span', { class: 'chip cerrado' }, 'Activo')))))));
+      cuerpo.append(h('div', { class: 'nota' }, h('b', null, 'Importante: '), 'desactivar una persona conserva sus periodos, resultados y pagos anteriores.'));
     }
   };
   function pintarEquipos(root) {
@@ -34,6 +34,14 @@
         h('td', null, e.d.activo === false ? 'Inactivo' : 'Activo')))));
     root.append(h('p', { class: 'muted peq' }, 'Solo los equipos marcados "recibe comisión" entran en el consolidado de pago. El supervisor del equipo es el supervisor de sus integrantes, salvo que la persona tenga un supervisor directo distinto.'));
   }
+  O.modalPersona = p => modalPersona(p);
+  O.excelPersona = async function (p) {
+    const tpl = E.plantilla();
+    if (!tpl || !tpl.base64) throw new Error('Falta la plantilla EDD. Súbela en Configuración o en Importar archivos.');
+    const hojas = E.periodos().map(x => ({ per: x.id, ev: E.evaluacion(x.id, p.id) })).filter(x => x.ev).map(x => ({ periodo: x.per, items: x.ev.d.items.map(i => ({ texto: i.texto, resultado: i.resultado })), final: x.ev.d.resultado_final || '', comentarios: x.ev.d.comentarios || '', confirmado: !!x.ev.d.cierre }));
+    const b = await E.excel.generarLibro(tpl.base64, { codigo: p.d.codigo, nombre: p.d.nombre, rol: p.d.rol }, hojas, p.d.historial_previo);
+    E.descargar(b, nombreLibro(p)); E.toast('Excel generado: ' + nombreLibro(p) + ' (' + hojas.length + ' mes' + (hojas.length === 1 ? '' : 'es') + ').');
+  };
   function modalPersona(p) {
     const cfg = E.conf(); const d = p ? E.clonar(p.d) : { activo: true };
     const c = {
@@ -115,8 +123,17 @@
   const fHist = { equipo: '', supervisor: '', q: '' };
   A.vistas.historial = function (root) {
     const pers = E.periodos();
-    root.append(h('div', { class: 'cab' }, h('div', null, h('h1', null, 'Historial y acumulado'), h('p', null, 'Solo cuentan los meses con evaluación autorizada (EDD) y métricos cerrados. Los meses en curso se muestran sin sumarse.')),
-      h('div', { class: 'acciones' }, U.btn('Descargar historial (Excel)', () => descargarHistorial(filas())))));
+    root.append(U.cabecera('Historial mensual', 'Solo cuentan los meses con evaluación autorizada (EDD) y métricos cerrados. Los meses en curso se muestran sin sumarse.', U.btn('⇩ Descargar historial (Excel)', () => descargarHistorial(filas()))));
+    const periodosCard = h('div', { class: 'hoja' }, h('div', { class: 'hoja-cab' }, h('div', null, h('h2', null, 'Periodos'), h('p', null, 'Cada mes conserva sus planes, resultados, aprobaciones y pagos'))),
+      U.tabla([{ t: 'Periodo' }, { t: 'Estado' }, { t: 'Gestores', cls: 'num' }, { t: 'Planes EDD', cls: 'num' }, { t: 'EDD autorizadas', cls: 'num' }, { t: 'Métricos cerrados', cls: 'num' }, { t: 'Comisión pagada', cls: 'num' }],
+        pers.slice().reverse().map(x => {
+          const evs = [...E.db.evaluaciones.values()].filter(e => e.d.periodo_id === x.id), mts = [...E.db.metricos.values()].filter(m => m.d.periodo_id === x.id);
+          const pagado = E.r2(mts.filter(m => m.d.cierre && E.comisiona(E.persona(m.d.persona_id))).reduce((s, m) => s + m.d.cierre.final, 0));
+          return h('tr', { class: 'clic', onclick: () => { A.setPeriodo(x.id); location.hash = '#/panel'; } }, h('td', null, h('b', null, E.periodo.nombre(x.id))), h('td', null, x.d.estado === 'cerrado' ? h('span', { class: 'chip cerrado' }, 'Cerrado') : h('span', { class: 'chip publicado' }, 'Abierto')),
+            h('td', { class: 'num' }, String(new Set(evs.map(e => e.d.persona_id).concat(mts.map(m => m.d.persona_id))).size)), h('td', { class: 'num' }, String(evs.length)), h('td', { class: 'num' }, evs.filter(e => e.d.cierre).length + ' / ' + evs.length),
+            h('td', { class: 'num' }, mts.filter(m => m.d.cierre).length + ' / ' + mts.length), h('td', { class: 'num' }, h('b', null, E.q(pagado))));
+        })));
+    root.append(periodosCard, h('h2', { style: { margin: '6px 0 12px' } }, 'Historial por gestor'));
     const cuerpo = h('div'); root.append(U.filtros(fHist, pintar), cuerpo);
     function filas() {
       return U.filtrar(E.personas(false), fHist).map(p => {

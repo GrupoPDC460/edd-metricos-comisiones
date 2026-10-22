@@ -3,24 +3,84 @@
   'use strict';
   const E = g.EDD, h = E.h, U = E.ui, A = E.app, O = E.ops, R = E.render;
 
+  // Las fichas antiguas (#/ficha/mes/persona/pestaña) se abren en la sección EDD o Métricos
   A.vistas.ficha = function (root, args) {
-    const per = args[0] || A.periodo, pid = args[1], tab = args[2] || 'edd';
-    const p = E.persona(pid);
-    if (!p || !E.db.periodos.get(per)) { root.append(U.vacio('No se encontró la ficha', 'La persona o el mes no existen.', U.btn('Volver al panel', () => { location.hash = '#/panel'; }))); return; }
-    if (A.periodo !== per) { A.periodo = per; A.carril(); }
-    const lista = O.filasPanel(per, A.filtros).map(x => x.p.id);
-    const i = lista.indexOf(pid);
-    const ir = id => { location.hash = '#/ficha/' + per + '/' + id + '/' + tab; };
-    const snap = E.snapshot(p);
-    root.append(h('div', { class: 'ficha-cab' },
-      h('div', null, h('a', { href: '#/panel', class: 'peq' }, '← Panel de ' + E.periodo.nombre(per)), h('h1', null, p.d.nombre),
-        h('p', { class: 'datos' }, [p.d.codigo ? 'Código ' + p.d.codigo : 'Sin código', p.d.rol, snap.equipo || 'Sin equipo', snap.supervisor ? 'Supervisor: ' + snap.supervisor : null, p.d.activo === false ? 'INACTIVO' : null].filter(Boolean).join(' · '))),
-      h('div', { class: 'acciones' }, h('button', { class: 'btn', type: 'button', disabled: i <= 0, onclick: () => ir(lista[i - 1]) }, '← Anterior'), h('span', { class: 'muted peq' }, i >= 0 ? (i + 1) + ' de ' + lista.length : ''), h('button', { class: 'btn', type: 'button', disabled: i < 0 || i >= lista.length - 1, onclick: () => ir(lista[i + 1]) }, 'Siguiente →'))));
-    if (O.mesCerrado(per)) root.append(h('div', { class: 'aviso warn' }, E.periodo.nombre(per) + ' está cerrado. Para editar, reábrelo en Planes del mes.'));
-    root.append(U.pestanas([{ k: 'edd', t: 'Evaluación EDD' }, { k: 'met', t: 'Métricos y comisión' }, { k: 'msg', t: 'Mensaje de WhatsApp' }, { k: 'cambios', t: 'Historial de cambios' }], tab, k => { location.hash = '#/ficha/' + per + '/' + pid + '/' + k; }));
-    const cont = h('div'); root.append(cont);
-    ({ edd: tabEdd, met: tabMet, msg: tabMsg, cambios: tabCambios }[tab] || tabEdd)(cont, per, p);
+    const per = args[0], pid = args[1], tab = args[2] || 'edd';
+    if (per && E.db.periodos.get(per) && A.periodo !== per) { A.periodo = per; try { localStorage.setItem('edd_periodo', per); } catch (e) { } }
+    if (pid) A.personaSel = pid;
+    location.replace('#/' + (tab === 'met' ? 'met' : 'edd') + '/' + (pid || ''));
   };
+  A.vistas.edd = (root, args) => vistaPersona(root, 'edd', args);
+  A.vistas.met = (root, args) => vistaPersona(root, 'met', args);
+
+  function vistaPersona(root, tipo, args) {
+    const per = A.periodo;
+    const titulo = tipo === 'edd' ? 'Evaluación de desempeño EDD' : 'Métricos y comisión';
+    const texto = tipo === 'edd' ? 'Plan de trabajo y resultado individual, con el formato visual EDD.' : 'Metas comunes, excepciones individuales y cumplimiento con su pago en quetzales.';
+    if (!per) { root.append(U.cabecera(titulo, texto)); root.append(U.vacio('Todavía no hay meses', 'Importa los archivos o crea el primer mes.', U.btn('⇧ Importar archivos', () => { location.hash = '#/importar'; }, 'primario'))); return; }
+    const lista = O.filasPanel(per, A.filtros).map(x => x.p);
+    let pid = args[0] || A.personaSel;
+    if (!pid || !E.persona(pid)) pid = lista.length ? lista[0].id : null;
+    const p = pid && E.persona(pid);
+    if (p) A.personaSel = p.id;
+    const ir = id => { A.personaSel = id; location.hash = '#/' + tipo + '/' + id; };
+    const acciones = [];
+    if (p && tipo === 'edd') {
+      acciones.push(U.btn('⇩ Excel individual', () => O.excelPersona(p)), U.btn('✆ Mensaje', () => E.modal({ titulo: p.d.nombre, ancho: '780px', cuerpo: O.panelMensaje(per, p) })),
+        U.btn('◷ Cambios', () => { const c = h('div'); E.modal({ titulo: 'Historial de cambios · ' + p.d.nombre, ancho: '900px', cuerpo: c }); tabCambios(c, per, p); }),
+        U.btn('＋ Agregar plan', () => modalAgregarPlan(per, p), 'primario'));
+    }
+    if (p && tipo === 'met') {
+      acciones.push(U.btn('✆ Mensaje', () => E.modal({ titulo: p.d.nombre, ancho: '780px', cuerpo: O.panelMensaje(per, p) })), U.btn('Editar base', () => O.modalPersona(p)), U.btn('☰ Métricos del equipo', () => { location.hash = '#/planes'; }, 'suave'));
+    }
+    root.append(U.cabecera(titulo, texto, ...acciones));
+    const i = p ? lista.findIndex(x => x.id === p.id) : -1;
+    const opciones = lista.map(x => ({ v: x.id, t: x.d.nombre + (x.d.codigo ? ' · ' + x.d.codigo : '') }));
+    if (p && i < 0) opciones.unshift({ v: p.id, t: p.d.nombre + ' (fuera del filtro)' });
+    root.append(h('div', { class: 'filtros' },
+      U.select(opciones.length ? opciones : [{ v: '', t: 'No hay gestores con estos filtros' }], p ? p.id : '', v => v && ir(v), { 'aria-label': 'Gestor', style: { minWidth: '280px' } }),
+      U.select(U.opcionesEquipo(true), A.filtros.equipo, v => { A.filtros.equipo = v; A.personaSel = null; location.hash = '#/' + tipo; A.render(); }, { 'aria-label': 'Equipo' }),
+      h('button', { class: 'btn', type: 'button', disabled: i <= 0, onclick: () => ir(lista[i - 1].id) }, '← Anterior'),
+      h('span', { class: 'muted peq' }, i >= 0 ? (i + 1) + ' de ' + lista.length : ''),
+      h('button', { class: 'btn', type: 'button', disabled: i < 0 || i >= lista.length - 1, onclick: () => ir(lista[i + 1].id) }, 'Siguiente →')));
+    if (!p) { root.append(U.vacio('Selecciona un gestor', 'Agrega o importa el padrón para comenzar.')); return; }
+    const snap = E.snapshot(p);
+    const ev = E.evaluacion(per, p.id), mt = E.metricos(per, p.id);
+    root.append(h('div', { class: 'hoja ficha-mini' },
+      h('div', { class: 'persona' }, U.ini(p.d.nombre, true), h('div', null, h('h2', null, p.d.nombre), h('small', null, [p.d.codigo ? 'Código ' + p.d.codigo : 'Sin código', p.d.rol, snap.supervisor ? 'Supervisor: ' + snap.supervisor : null].filter(Boolean).join(' · ')))),
+      h('div', { class: 'acciones' }, U.equipoPill(p.d.equipo_id), h('span', { class: 'chip ' + E.calc.estadoEdd(ev).k }, 'EDD: ' + E.calc.estadoEdd(ev).t), E.comisiona(p) ? h('span', { class: 'chip ' + E.calc.estadoMet(mt).k }, 'Métricos: ' + E.calc.estadoMet(mt).t) : h('span', { class: 'chip sin' }, 'Sin comisión'), ev && ev.d.resultado_final ? U.sem(ev.d.resultado_final) : null)));
+    if (O.mesCerrado(per)) root.append(h('div', { class: 'aviso warn' }, E.periodo.nombre(per) + ' está cerrado. Para editar, reábrelo en Planes del mes.'));
+    const cont = h('div'); root.append(cont);
+    (tipo === 'edd' ? tabEdd : tabMet)(cont, per, p);
+  }
+
+  function modalAgregarPlan(per, p) {
+    const ta = h('textarea', { class: 'campo', rows: 2, placeholder: 'Ej.: Rendición de cuentas al 100%' });
+    const eqs = E.equipos().filter(e => e.d.activo !== false);
+    const sups = E.supervisoresLista().filter(s => eqs.some(e => e.d.supervisor_id === s.id));
+    const destino = U.select([{ v: 'persona', t: 'Solo a ' + p.d.nombre }]
+      .concat(p.d.equipo_id ? [{ v: 'eq:' + p.d.equipo_id, t: 'Todo ' + U.nombreEquipo(p.d.equipo_id) }] : [])
+      .concat(sups.map(s => ({ v: 'sup:' + s.id, t: 'Equipos de ' + s.d.nombre })))
+      .concat([{ v: 'todos', t: 'Todos los equipos' }]), 'persona');
+    const exc = h('input', { type: 'checkbox', checked: true });
+    E.modal({
+      titulo: 'Agregar plan de trabajo EDD', cuerpo: h('div', { style: { display: 'grid', gap: '12px' } }, U.campo('Directriz / plan de trabajo *', ta), U.campo('Asignar a', destino),
+        h('label', { class: 'check' }, exc, 'Incluir a quienes tienen plan individual'),
+        h('p', { class: 'muted peq' }, 'Al asignarla a un equipo se agrega a su plan común de ' + E.periodo.nombre(per) + ' y se aplica a sus integrantes. Las evaluaciones cerradas no se modifican.')),
+      acciones: [{ label: 'Cancelar' }, {
+        label: 'Agregar plan', tipo: 'primario', onClick: async () => {
+          const texto = ta.value.trim(); if (!texto) { ta.classList.add('err'); throw new Error('Escribe la directriz.'); }
+          const d = destino.value;
+          if (d === 'persona') { await O.agregarDirectrizPersona(per, p, texto); E.toast('Directriz agregada a ' + p.d.nombre + '.'); A.refrescar(); return; }
+          const ids = d === 'todos' ? eqs.map(e => e.id) : d.startsWith('eq:') ? [d.slice(3)] : eqs.filter(e => e.d.supervisor_id === d.slice(4)).map(e => e.id);
+          const r = await O.agregarDirectriz(per, texto, ids, { aplicar: true, excepciones: exc.checked });
+          E.toast('Directriz agregada a ' + r.equipos + ' equipo(s) y ' + r.personas + ' persona(s).');
+          if (r.omitidos.length) setTimeout(() => E.modal({ titulo: 'No se modificaron', cuerpo: h('ul', { class: 'lista-simple' }, r.omitidos.map(x => h('li', null, x))) }), 50);
+          A.refrescar();
+        }
+      }]
+    });
+  }
 
   function crearDesdeEquipo(cont, per, p, tipo) {
     const plan = p.d.equipo_id && E.db.planes.get(E.idPlan(per, p.d.equipo_id, tipo));
@@ -158,40 +218,47 @@
     const pintarTabla = () => {
       tabla.innerHTML = '';
       const r = E.calc.metricos(w, p, cfg);
-      const filas = [];
-      w.d.items.forEach((it, i) => {
-        const ri = r.items[i];
-        const nom = h('textarea', { class: 'campo', rows: 2, disabled: bloqueado }, it.nombre); nom.addEventListener('input', () => { it.nombre = nom.value; if (it.origen === 'equipo') it.origen = 'individual'; marcar(); });
+      const tarjetas = w.d.items.map((it, i) => {
+        const ri = r.items[i] || {};
+        const nom = h('textarea', { class: 'campo', rows: 2, disabled: bloqueado, 'aria-label': 'Métrico ' + (i + 1) }, it.nombre); nom.addEventListener('input', () => { it.nombre = nom.value; if (it.origen === 'equipo') it.origen = 'individual'; marcar(); });
         const meta = h('input', { class: 'campo', value: it.meta || '', placeholder: 'Meta', disabled: bloqueado }); meta.addEventListener('input', () => { it.meta = meta.value; marcar(); });
         const peso = h('input', { class: 'campo num', type: 'number', min: 0, max: 100, step: '0.5', value: it.peso == null ? '' : it.peso, disabled: bloqueado, 'data-peso': '1' }); peso.addEventListener('input', () => { it.peso = E.num(peso.value); if (it.origen === 'equipo') it.origen = 'individual'; marcar(); });
-        const res = h('input', { class: 'campo', value: it.resultado || '', placeholder: 'Obtenido', disabled: bloqueado }); res.addEventListener('input', () => { it.resultado = res.value; marcar(); });
+        const res = h('input', { class: 'campo', value: it.resultado || '', placeholder: 'Resultado obtenido', disabled: bloqueado }); res.addEventListener('input', () => { it.resultado = res.value; marcar(); });
         const cum = h('input', { class: 'campo num', type: 'number', min: 0, max: 100, step: '1', value: it.cumplimiento == null ? '' : it.cumplimiento, placeholder: '0–100', disabled: bloqueado });
         cum.addEventListener('change', () => { const v = E.num(cum.value); it.cumplimiento = v == null ? null : Math.max(0, Math.min(100, v)); if (v != null && (v < 0 || v > 100)) E.toast('El cumplimiento va de 0 a 100. La regla no define pago por sobrecumplimiento.', 'warn'); if (it.cumplimiento === 100 || it.cumplimiento == null) it.reduccion = null; pintarTabla(); marcar(); });
-        const sugerir = () => { const m = E.num(String(it.meta || '').replace(/[^\d.,]/g, '')), o = E.num(String(it.resultado || '').replace(/[^\d.,]/g, '')); return m && o != null ? Math.min(100, E.r2(o / m * 100)) : null; };
-        const sug = sugerir();
+        const m = E.num(String(it.meta || '').replace(/[^\d.,]/g, '')), o = E.num(String(it.resultado || '').replace(/[^\d.,]/g, ''));
+        const sug = m && o != null ? Math.min(100, E.r2(o / m * 100)) : null;
         const notas = h('input', { class: 'campo', value: it.notas || '', placeholder: 'Notas', disabled: bloqueado }); notas.addEventListener('input', () => { it.notas = notas.value; marcar(); });
-        const resp = U.select([{ v: '', t: 'Responsable' }].concat(U.opcionesAutoriza().slice(1)), it.responsable || '', v => { it.responsable = v; marcar(); }, { disabled: bloqueado });
-        filas.push(h('tr', null,
-          h('td', null, h('span', { class: 'origen' + (it.origen === 'equipo' ? ' eq' : '') }, (i + 1) + ' · ' + (it.origen === 'equipo' ? 'del equipo' : 'individual')), nom, h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '6px' } }, notas, resp)),
-          h('td', null, meta, h('div', { style: { marginTop: '6px' } }, res)),
-          h('td', { style: { width: '84px' } }, peso),
-          h('td', { style: { width: '110px' } }, cum, sug != null && !bloqueado && it.cumplimiento == null ? h('button', { class: 'btn mini fantasma', type: 'button', title: 'Resultado ÷ meta', onclick: () => { it.cumplimiento = sug; pintarTabla(); marcar(); } }, 'Usar ' + sug + '%') : null),
-          h('td', { class: 'num', style: { width: '100px' } }, h('b', null, ri && ri.pago != null ? E.q(ri.pago) : '—'), h('span', { class: 'sub' }, 'de ' + E.q(ri && ri.monto))),
-          h('td', null, h('button', { class: 'btn mini fantasma', type: 'button', title: 'Quitar', disabled: bloqueado, onclick: () => { w.d.items.splice(i, 1); pintarTabla(); marcar(); } }, '✕'))));
+        const resp = U.select([{ v: '', t: 'Supervisor responsable' }].concat(U.opcionesAutoriza().slice(1)), it.responsable || '', v => { it.responsable = v; marcar(); }, { disabled: bloqueado, 'aria-label': 'Supervisor responsable' });
+        const barra = h('div', { class: 'progreso' }, h('i', { style: { width: (it.cumplimiento == null ? 0 : it.cumplimiento) + '%', background: it.cumplimiento == null ? '#cfd8e3' : it.cumplimiento >= 100 ? 'var(--ok)' : it.cumplimiento > 0 ? '#e0a100' : 'var(--err)' } }));
+        const card = h('div', { class: 'met-card' },
+          h('div', { class: 'cab-m' }, h('span', { class: 'origen' + (it.origen === 'equipo' ? ' eq' : '') }, 'Métrico ' + (i + 1) + ' · ' + (it.origen === 'equipo' ? 'del equipo' : 'individual')),
+            h('button', { class: 'btn mini fantasma', type: 'button', title: 'Quitar métrico', disabled: bloqueado, onclick: () => { w.d.items.splice(i, 1); pintarTabla(); marcar(); } }, '✕')),
+          nom,
+          h('div', { class: 'fila' }, U.campo('Meta', meta), U.campo('Ponderación %', peso)),
+          h('div', { class: 'fila' }, U.campo('Resultado', res), U.campo('Cumplimiento %', cum, sug != null && !bloqueado && it.cumplimiento == null ? h('a', { href: '#', onclick: e => { e.preventDefault(); it.cumplimiento = sug; pintarTabla(); marcar(); } }, 'Usar ' + sug + '% (resultado ÷ meta)') : null)),
+          barra,
+          h('div', { class: 'pago' }, ri.pago != null ? E.q(ri.pago) : h('span', { style: { color: 'var(--gris-2)', fontSize: '15px' } }, 'Pendiente'), h('small', null, '  de ' + E.q(ri.monto) + ' posibles')),
+          h('div', { class: 'fila' }, notas, resp));
         if (it.cumplimiento != null && it.cumplimiento < 100) {
           it.reduccion = it.reduccion || { por: '', motivo: '' };
-          const por = U.select(U.opcionesAutoriza(), it.reduccion.por || '', v => { it.reduccion.por = v; marcar(); }, { disabled: bloqueado });
+          const por = U.select(U.opcionesAutoriza(), it.reduccion.por || '', v => { it.reduccion.por = v; marcar(); }, { disabled: bloqueado, 'aria-label': 'Supervisor que autoriza la reducción' });
           const mot = h('input', { class: 'campo', value: it.reduccion.motivo || '', placeholder: 'Motivo de la reducción', disabled: bloqueado }); mot.addEventListener('input', () => { it.reduccion.motivo = mot.value; marcar(); });
-          filas.push(h('tr', null, h('td', { colspan: 6, class: 'reduc' }, h('div', { style: { display: 'grid', gridTemplateColumns: 'auto 220px 1fr', gap: '8px', alignItems: 'center' } },
-            h('span', { class: 'peq' }, 'Reducción a ' + it.cumplimiento + '% — autoriza:'), por, mot), it.reduccion.fecha ? h('span', { class: 'muted peq' }, 'Registrada el ' + E.fechaHora(it.reduccion.fecha)) : null)));
+          card.append(h('div', { class: 'reduc' }, h('span', { class: 'peq' }, h('b', null, 'Reducción a ' + it.cumplimiento + '%'), ' — la autoriza el supervisor'), por, mot, it.reduccion.fecha ? h('span', { class: 'muted peq' }, 'Registrada el ' + E.fechaHora(it.reduccion.fecha)) : null));
         }
+        return card;
       });
-      tabla.append(h('div', { class: 'tabla-env' }, h('table', { class: 't met-tabla' }, h('thead', null, h('tr', null, ['Métrico / entregable', 'Meta y resultado', 'Peso %', 'Cumplimiento %', 'Pago', ''].map((t, k) => h('th', { class: k === 4 ? 'num' : null }, t)))), h('tbody', null, filas.length ? filas : h('tr', null, h('td', { colspan: 6, class: 'vacio' }, 'Sin métricos.'))))));
-      tabla.append(h('button', { class: 'btn mini', type: 'button', style: { marginTop: '8px' }, disabled: bloqueado || w.d.items.length >= cfg.met_max, onclick: () => { w.d.items.push(O.itemMet({ nombre: '', peso: null })); pintarTabla(); marcar(); } }, '+ Agregar métrico individual'));
+      tabla.append(tarjetas.length ? h('div', { class: 'met-grid' }, tarjetas) : h('div', { class: 'vacio' }, h('div', { class: 'vacio-ico' }, '◉'), h('b', null, 'Sin métricos para este gestor'), h('p', { class: 'peq' }, 'Agrega una meta, asígnale una ponderación y captura el cumplimiento al cierre.')));
+      tabla.append(h('button', { class: 'btn mini', type: 'button', style: { marginTop: '12px' }, disabled: bloqueado || w.d.items.length >= cfg.met_max, onclick: () => { w.d.items.push(O.itemMet({ nombre: '', peso: null })); pintarTabla(); marcar(); } }, '＋ Agregar métrico individual'));
     };
     const pintarResumen = () => {
       resumen.innerHTML = '';
       const r = E.calc.metricos(w, p, cfg);
+      if (typeof franja !== 'undefined') {
+        const pond = E.r2(r.items.reduce((a, it) => a + (Number(it.peso) || 0) * (it.cumplimiento == null ? 0 : it.cumplimiento) / 100, 0));
+        franja.innerHTML = '';
+        franja.append(h('div', null, h('span', null, 'Base 100 %'), h('b', null, E.q(r.base))), h('div', null, h('span', null, 'Cumplimiento ponderado'), h('b', null, pond + '%')), h('div', null, h('span', null, r.elegible ? 'Pago final (con garantía)' : 'Pago estimado'), h('b', { class: 'verde' }, E.q(r.final))));
+      }
       const ok = Math.abs(r.suma - 100) < 0.001;
       resumen.append(h('div', { class: 'hoja-cab', style: { marginTop: '14px' } }, h('h3', null, 'Cálculo'), h('span', { class: 'suma ' + (ok ? 'ok' : 'mal') }, 'Ponderaciones: ' + r.suma + '%')));
       resumen.append(h('div', { class: 'formula' }, r.items.map((it, i) => h('div', null, (i + 1) + '. ' + E.q(r.base) + ' × ' + E.pct(it.peso) + ' × ' + (it.cumplimiento == null ? '—' : it.cumplimiento + '%') + ' = ' + (it.pago == null ? 'pendiente' : E.q(it.pago))))));
@@ -209,7 +276,8 @@
       else if (r.pendientes.length && !w.d.cierre) resumen.append(h('div', { class: 'aviso warn' }, h('b', null, 'Pendiente para cerrar:'), h('ul', null, r.pendientes.map(x => h('li', null, x)))));
       if (w.d.cierre) resumen.append(h('div', { class: 'aviso ok' }, 'Métricos cerrados por ' + w.d.cierre.por + ' el ' + E.fechaHora(w.d.cierre.fecha) + '. Total a pagar ' + E.q(w.d.cierre.final) + '.'));
     };
-    pintarTabla(); izq.append(tabla, resumen); pintarResumen();
+    const franja = h('div', { class: 'met-strip', style: { margin: '4px 0 16px', padding: '14px 16px', background: '#f7f9fc', borderRadius: '12px' } });
+    pintarTabla(); izq.append(franja, tabla, resumen); pintarResumen();
     (w.d.reaperturas || []).forEach(x => izq.append(h('p', { class: 'muted peq' }, 'Reabierto por ' + x.por + ' el ' + E.fechaHora(x.fecha) + ': ' + x.motivo)));
     const validar = () => {
       w.d.items.forEach(it => { it.nombre = (it.nombre || '').trim(); });

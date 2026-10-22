@@ -22,7 +22,7 @@
     h('thead', null, h('tr', null, cols.map(c => h('th', { class: c.cls || null, style: c.w ? { width: c.w } : null }, c.t)))),
     h('tbody', null, filas.length ? filas : h('tr', null, h('td', { colspan: cols.length, class: 'vacio' }, 'No hay registros con estos filtros.'))),
     pie ? h('tfoot', null, pie) : null));
-  U.vacio = (titulo, texto, ...acciones) => h('div', { class: 'hoja vacio' }, h('h2', null, titulo), texto ? h('p', null, texto) : null, acciones.length ? h('div', { class: 'acciones', style: { justifyContent: 'center', marginTop: '12px' } }, acciones) : null);
+  U.vacio = (titulo, texto, ...acciones) => h('div', { class: 'hoja vacio' }, h('div', { class: 'vacio-ico' }, '◎'), h('h2', null, titulo), texto ? h('p', null, texto) : null, acciones.length ? h('div', { class: 'acciones', style: { justifyContent: 'center', marginTop: '12px' } }, acciones) : null);
   U.btn = (label, onClick, cls, attrs) => h('button', Object.assign({ type: 'button', class: 'btn ' + (cls || ''), onclick: async (e) => {
     const b = e.currentTarget; b.disabled = true;
     try { await onClick(e); } catch (err) { E.errorToast(err); } finally { if (b.isConnected) b.disabled = false; }
@@ -39,15 +39,20 @@
     return [{ v: '', t: 'Elige quién autoriza' }].concat([...nombres].sort((a, b) => a.localeCompare(b, 'es')).map(n => ({ v: n, t: n })));
   };
 
-  // Filtros comunes: equipo, supervisor y búsqueda
+  // Filtros comunes (en línea, como barra de filtros): equipo, supervisor y búsqueda
   U.filtros = (f, onCambio, extra) => {
-    const q = h('input', { class: 'campo', type: 'search', placeholder: 'Buscar por nombre o código', value: f.q || '' });
+    const q = h('input', { class: 'campo', type: 'search', placeholder: 'Buscar gestor o código', value: f.q || '', 'aria-label': 'Buscar gestor' });
     let t; q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { f.q = q.value; onCambio(); }, 220); });
-    return h('div', { class: 'rejilla', style: { marginBottom: '14px' } },
-      U.campo('Equipo', U.select(U.opcionesEquipo(true).concat([{ v: '__sin', t: 'Sin equipo asignado' }]), f.equipo, v => { f.equipo = v; onCambio(); })),
-      U.campo('Supervisor', U.select(U.opcionesSupervisor(), f.supervisor, v => { f.supervisor = v; onCambio(); })),
-      U.campo('Gestor', q), extra || null);
+    return h('div', { class: 'filtros' },
+      U.select(U.opcionesEquipo(true).concat([{ v: '__sin', t: 'Sin equipo asignado' }]), f.equipo, v => { f.equipo = v; onCambio(); }, { 'aria-label': 'Equipo' }),
+      U.select(U.opcionesSupervisor(), f.supervisor, v => { f.supervisor = v; onCambio(); }, { 'aria-label': 'Supervisor' }),
+      q, extra || null);
   };
+  U.iniciales = n => String(n || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0]).join('').toUpperCase();
+  U.ini = (n, grande) => h('span', { class: 'ini' + (grande ? ' grande' : ''), 'aria-hidden': 'true' }, U.iniciales(n));
+  U.persona = (p, sub) => h('div', { class: 'persona' }, U.ini(p.d.nombre), h('div', { style: { minWidth: 0 } }, h('b', null, p.d.nombre), h('small', null, sub != null ? sub : (p.d.codigo ? 'Código ' + p.d.codigo : 'Sin código') + (p.d.activo === false ? ' · inactivo' : ''))));
+  U.equipoPill = id => h('span', { class: 'equipo-pill' }, U.nombreEquipo(id));
+  U.cabecera = (titulo, texto, ...acciones) => h('div', { class: 'cab' }, h('div', null, h('h1', null, titulo), texto ? h('p', null, texto) : null), acciones.length ? h('div', { class: 'acciones' }, acciones) : null);
   U.filtrar = (personas, f) => personas.filter(p => {
     if (f.equipo === '__sin' && p.d.equipo_id) return false;
     if (f.equipo && f.equipo !== '__sin' && p.d.equipo_id !== f.equipo) return false;
@@ -67,5 +72,7 @@
   U.ajustar = ta => { ta.style.height = 'auto'; ta.style.height = Math.max(ta.scrollHeight + 2, 38) + 'px'; };
   U.ajustarTextareas = root => (root || document).querySelectorAll('textarea.campo').forEach(U.ajustar);
   document.addEventListener('input', e => { if (e.target && e.target.matches && e.target.matches('textarea.campo')) U.ajustar(e.target); });
+  let tRes; window.addEventListener('resize', () => { clearTimeout(tRes); tRes = setTimeout(() => U.ajustarTextareas(document.getElementById('vista')), 200); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => U.ajustarTextareas(document.getElementById('vista')));
   U.nombreArchivo = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
 })(window);

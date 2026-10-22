@@ -1,6 +1,6 @@
 import asyncio, os, subprocess, time, json, sys
 from playwright.async_api import async_playwright
-ROOT='/home/claude/edd'; OUTDIR='/home/claude/x/shots2'; OUT='/home/claude/x/shots3'; os.makedirs(OUT, exist_ok=True)
+ROOT='/home/claude/edd'; OUTDIR='/home/claude/x/shots2'; OUT='/home/claude/x/shots4'; os.makedirs(OUT, exist_ok=True)
 UP='/mnt/user-data/uploads/'
 srv = subprocess.Popen(['true'])
 time.sleep(1)
@@ -80,7 +80,7 @@ async def main():
         await page.screenshot(path=OUT+'/09_ficha_edd_cerrada.png', full_page=True)
         # métricos
         await page.evaluate("location.hash='#/ficha/2026-10/p-15547/met'"); await page.wait_for_timeout(800)
-        cums = page.locator('.met-tabla input[placeholder="0–100"]')
+        cums = page.locator('input[placeholder="0–100"]')
         vals=['100','100','50']
         for i in range(await cums.count()):
             await cums.nth(i).fill(vals[i]); await cums.nth(i).dispatch_event('change'); await page.wait_for_timeout(150)
@@ -88,7 +88,7 @@ async def main():
         await page.click('button:has-text("Cerrar métricos")'); await page.wait_for_timeout(400)
         print('modal falta:', await page.inner_text('.modal-cuerpo'))
         await page.click('.modal button:has-text("Cerrar")'); await page.wait_for_timeout(200)
-        red = page.locator('td.reduc')
+        red = page.locator('.reduc')
         await red.locator('select').select_option('Daniel Michael Monge Lopez')
         await red.locator('input').fill('Promesas rotas al 37% al corte del 26 de octubre')
         await page.click('button:has-text("Guardar cambios")'); await page.wait_for_timeout(700)
@@ -99,11 +99,11 @@ async def main():
         await page.screenshot(path=OUT+'/11_ficha_met_cerrado.png', full_page=True)
         # pesos inválidos en otra persona
         await page.evaluate("location.hash='#/ficha/2026-10/p-15549/met'"); await page.wait_for_timeout(700)
-        pesos = page.locator('.met-tabla input[data-peso]')
+        pesos = page.locator('input[data-peso]')
         await pesos.nth(0).fill('30'); await pesos.nth(0).dispatch_event('input')
         await page.click('button:has-text("Guardar cambios")'); await page.wait_for_timeout(500)
         print('toast pesos:', await page.inner_text('#toasts'))
-        print('campos marcados:', await page.locator('.met-tabla input.err').count())
+        print('campos marcados:', await page.locator('input[data-peso].err').count())
         # Giselle garantía
         await page.evaluate("location.hash='#/planes'"); await page.wait_for_timeout(800)
         await page.screenshot(path=OUT+'/12_planes.png', full_page=True)
@@ -113,6 +113,8 @@ async def main():
         print('toast directriz:', await page.inner_text('#toasts'))
         print('items Diego tras directriz:', await page.evaluate("EDD.evaluacion('2026-10','p-15523').d.items.map(i=>i.origen+':'+i.texto.slice(0,25))"))
         print('Giselle (excepción):', await page.evaluate("EDD.evaluacion('2026-10','p-15872').d.items.map(i=>i.texto.slice(0,25))")); print('Heidi (cerrada) sin cambios:', await page.evaluate("EDD.evaluacion('2026-10','p-15547').d.items.length"))
+        while await page.locator('.modal-fondo').count():
+            await page.locator('.modal-fondo .modal-pie button').last.click(); await page.wait_for_timeout(200)
         # aplicar plan EDD Chevere
         await page.locator('.hoja', has_text='Team Chévere').locator('button:has-text("Aplicar al equipo")').first.click(); await page.wait_for_timeout(400)
         await page.screenshot(path=OUT+'/13_aplicar.png')
@@ -124,10 +126,11 @@ async def main():
         await page.click('.modal button:has-text("Confirmar periodos")'); await page.wait_for_timeout(700)
         print('garantia giselle', await page.evaluate("EDD.persona('p-15872').d.garantia"))
         # whatsapp
-        await page.evaluate("location.hash='#/ficha/2026-10/p-15547/msg'"); await page.wait_for_timeout(700)
+        await page.evaluate("location.hash='#/edd/p-15547'"); await page.wait_for_timeout(700); await page.click('button:has-text("✆ Mensaje")'); await page.wait_for_timeout(400)
         await page.click('.toggle button:has-text("Resultado")'); await page.wait_for_timeout(200)
-        print('mensaje:', (await page.input_value('.hoja textarea'))[:500])
+        print('mensaje:', (await page.input_value('.modal textarea'))[:300])
         await page.screenshot(path=OUT+'/15_mensaje.png', full_page=True)
+        await page.keyboard.press('Escape'); await page.wait_for_timeout(200)
         # export
         await page.evaluate("location.hash='#/exportar'"); await page.wait_for_timeout(900)
         await page.screenshot(path=OUT+'/16_exportar.png', full_page=True)
@@ -138,17 +141,20 @@ async def main():
         # panel con filtro y consolidado
         await page.evaluate("location.hash='#/panel'"); await page.wait_for_timeout(700)
         async with page.expect_download() as dl2:
-            await page.click('button:has-text("Descargar consolidado (Excel)")')
+            await page.click('button:has-text("Exportar consolidado")')
         d2 = await dl2.value; await d2.save_as('/home/claude/x/consolidado.xlsx'); print('consolidado', d2.suggested_filename)
         await page.screenshot(path=OUT+'/17_panel2.png', full_page=True)
+        for r in ['edd/p-15542','met/p-15542']:
+            await page.evaluate("location.hash='#/%s'"%r); await page.wait_for_timeout(900)
+            await page.screenshot(path=OUT+'/18_%s.png'%r.split('/')[0], full_page=True)
         for r in ['padron','historial','whatsapp','config']:
             await page.evaluate("location.hash='#/%s'"%r); await page.wait_for_timeout(700)
             await page.screenshot(path=OUT+'/18_%s.png'%r, full_page=True)
         # imagen combinada
         canv = await page.evaluate("""(async()=>{const p=EDD.persona('p-15547'); const c=EDD.render.unir([await EDD.render.edd(EDD.render.datosEdd('2026-10',p,'final')), await EDD.render.metricos(EDD.render.datosMet('2026-10',p,'final'))]); return c.toDataURL('image/png');})()""")
-        import base64; open('/home/claude/x/shots3/19_combinada.png','wb').write(base64.b64decode(canv.split(',')[1]))
+        import base64; open('/home/claude/x/shots4/19_combinada.png','wb').write(base64.b64decode(canv.split(',')[1]))
         canv = await page.evaluate("""(async()=>{const p=EDD.persona('p-15872'); const c=EDD.render.unir([await EDD.render.edd(EDD.render.datosEdd('2026-10',p,'inicial')), await EDD.render.metricos(EDD.render.datosMet('2026-10',p,'inicial'))]); return c.toDataURL('image/png');})()""")
-        open('/home/claude/x/shots3/20_inicial_giselle.png','wb').write(base64.b64decode(canv.split(',')[1]))
+        open('/home/claude/x/shots4/20_inicial_giselle.png','wb').write(base64.b64decode(canv.split(',')[1]))
         # mobile
         await page.set_viewport_size({'width':390,'height':844})
         await page.evaluate("location.hash='#/ficha/2026-10/p-15549/edd'"); await page.wait_for_timeout(700)

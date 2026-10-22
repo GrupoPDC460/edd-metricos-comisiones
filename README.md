@@ -1,4 +1,6 @@
-# EDD, métricos y comisiones — Grupo PDC
+# Desempeño & Métricos — Grupo PDC
+
+Plataforma de evaluaciones de desempeño (EDD), métricos y comisiones. Secciones: **Resumen**, **Evaluación EDD**, **Métricos y comisión**, **Gestores**, **Historial mensual**, y herramientas (Planes del mes, Exportar Excel, WhatsApp, Importar, Configuración).
 
 Plataforma web para el equipo de **Cobros Venta Directa**. Reemplaza el trabajo manual en varios Excel:
 

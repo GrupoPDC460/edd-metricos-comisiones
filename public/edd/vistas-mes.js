@@ -73,52 +73,124 @@
     return evs.length + mts.length;
   };
 
-  // ------------------------------------------------------------------ Panel
+  // Agrega una directriz al plan común de varios equipos (y opcionalmente la aplica a sus integrantes)
+  O.agregarDirectriz = async function (per, texto, equipoIds, opc) {
+    const cfg = E.conf(); opc = opc || {};
+    const recs = [], omitidos = [];
+    equipoIds.map(id => E.equipo(id)).filter(Boolean).forEach(e => {
+      const id = E.idPlan(per, e.id, 'edd'); const rec = E.db.planes.get(id);
+      const r = rec ? E.copiaRec(rec) : { id, d: { periodo_id: per, equipo_id: e.id, tipo: 'edd', items: [] } };
+      if (r.d.items.some(i => E.norm(i.texto) === E.norm(texto))) { omitidos.push(e.d.nombre + ': su plan ya la tiene'); return; }
+      if (r.d.items.length >= cfg.planes_max) { omitidos.push(e.d.nombre + ': su plan ya tiene ' + cfg.planes_max + ' directrices'); return; }
+      r.d.items.push({ id: 'e' + E.uid(), texto }); recs.push(r);
+    });
+    await E.guardar('planes', recs, 'directriz para varios equipos');
+    let personas = 0;
+    if (opc.aplicar) for (const r of recs) {
+      const filas = O.previaAplicar(per, r.d.equipo_id, 'edd');
+      personas += await O.aplicarPlan(per, r.d.equipo_id, 'edd', filas, new Set());
+      const nuevo = r.d.items[r.d.items.length - 1]; const exc = [];
+      filas.filter(f => f.estado === 'excepcion' || f.estado === 'excede').forEach(f => {
+        if (!opc.excepciones) { omitidos.push(f.p.d.nombre + ': tiene plan individual (no se modificó)'); return; }
+        const ev = E.evaluacion(per, f.p.id); if (!ev || ev.d.cierre) return;
+        if (ev.d.items.some(i => E.norm(i.texto) === E.norm(texto))) return;
+        if (ev.d.items.length >= cfg.planes_max) { omitidos.push(f.p.d.nombre + ': su plan ya tiene ' + cfg.planes_max + ' directrices'); return; }
+        const c = E.copiaRec(ev); c.d.items.push({ id: nuevo.id, texto: nuevo.texto, origen: 'equipo', resultado: null }); exc.push(c);
+      });
+      filas.filter(f => f.estado === 'cerrado').forEach(f => omitidos.push(f.p.d.nombre + ': su evaluación ya está cerrada'));
+      if (exc.length) { await E.guardar('evaluaciones', exc, 'directriz para varios equipos'); personas += exc.length; }
+    }
+    return { equipos: recs.length, personas, omitidos };
+  };
+  // Agrega una directriz individual a una persona (crea su evaluación del mes si no existe)
+  O.agregarDirectrizPersona = async function (per, p, texto) {
+    const cfg = E.conf();
+    const ev = E.evaluacion(per, p.id);
+    if (ev && ev.d.cierre) throw new Error('La evaluación de ' + p.d.nombre + ' ya está cerrada.');
+    const r = ev ? E.copiaRec(ev) : O.nuevaEval(per, p, []);
+    if (r.d.items.some(i => E.norm(i.texto) === E.norm(texto))) throw new Error(p.d.nombre + ' ya tiene esa directriz.');
+    if (r.d.items.length >= cfg.planes_max) throw new Error('El plan ya tiene ' + cfg.planes_max + ' directrices.');
+    r.d.items.push(O.itemEdd({ texto }, 'individual'));
+    await E.guardar('evaluaciones', [r], 'directriz individual');
+  };
+
+  // ------------------------------------------------------------------ Resumen (panel del mes)
   A.vistas.panel = function (root) {
     const per = A.periodo;
     if (!per) {
-      root.append(U.vacio('Todavía no hay meses', 'Importa el Formato EDD para crear el padrón y los planes de ' + E.periodo.nombre(E.conf().periodo_inicial) + ', o crea el primer mes.',
-        U.btn('Importar archivos', () => { location.hash = '#/importar'; }, 'primario'), U.btn('Crear mes', () => A.nuevoMes())));
+      root.append(U.cabecera('Resumen del equipo', 'Seguimiento EDD y consolidación de métricos del periodo.'));
+      root.append(U.vacio('Todavía no hay meses', 'Importa el Formato EDD y los archivos individuales para crear el padrón y los planes de ' + E.periodo.nombre(E.conf().periodo_inicial) + ', o crea el primer mes.',
+        U.btn('⇧ Importar archivos', () => { location.hash = '#/importar'; }, 'primario'), U.btn('＋ Crear mes', () => A.nuevoMes())));
       return;
     }
     const f = A.filtros;
-    root.append(h('div', { class: 'cab' }, h('div', null, h('h1', null, 'Panel de ' + E.periodo.nombre(per)), h('p', null, 'Resultado EDD de cada gestor y, para los equipos con comisión, el consolidado de métricos, garantía y total a pagar.')),
-      h('div', { class: 'acciones' }, U.btn('Descargar consolidado (Excel)', () => descargarConsolidado(per, filasPanel(per, f), 'xlsx'), 'primario'), U.btn('CSV', () => descargarConsolidado(per, filasPanel(per, f), 'csv')))));
+    root.append(U.cabecera('Resumen del equipo', 'Seguimiento EDD y consolidación de métricos de ' + E.periodo.nombre(per) + '.',
+      U.btn('⇩ Exportar consolidado', () => descargarConsolidado(per, filasPanel(per, f), 'xlsx')),
+      U.btn('＋ Agregar gestor', () => O.modalPersona(null), 'primario')));
     const cuerpo = h('div');
     root.append(U.filtros(f, pintar), cuerpo);
     pintar();
     function pintar() {
       cuerpo.innerHTML = '';
+      const cfg = E.conf();
       const filas = filasPanel(per, f);
+      const gestores = filas.filter(x => x.p.d.activo !== false);
       const conEv = filas.filter(x => x.ev), cerradas = conEv.filter(x => x.ev.d.cierre);
       const com = filas.filter(x => x.com && x.mt);
       const totalFinal = E.r2(com.reduce((s, x) => s + x.rm.final, 0));
       const metCerr = com.filter(x => x.mt.d.cierre).length;
+      const pendMet = filas.filter(x => x.mt && !x.mt.d.cierre).reduce((n, x) => n + x.mt.d.items.filter(i => i.cumplimiento == null || i.cumplimiento === '').length, 0);
       const dist = {}; cerradas.forEach(x => { dist[x.ev.d.resultado_final] = (dist[x.ev.d.resultado_final] || 0) + 1; });
       cuerpo.append(h('div', { class: 'kpis' },
-        h('div', { class: 'kpi' }, h('span', null, 'EDD autorizadas'), h('b', null, cerradas.length + ' / ' + conEv.length),
+        h('div', { class: 'kpi' }, h('span', null, 'Gestores en el periodo'), h('b', null, String(gestores.length)), h('em', null, filas.filter(x => !x.ev && !x.mt).length + ' sin plan este mes')),
+        h('div', { class: 'kpi' }, h('span', null, 'EDD evaluadas'), h('b', null, String(cerradas.length), h('small', null, ' / ' + conEv.length)),
           h('div', { class: 'barra-res', title: E.RESULTADOS.map(r => r + ': ' + (dist[r] || 0)).join(' · ') }, E.RESULTADOS.map(r => dist[r] ? h('i', { style: { width: (dist[r] / Math.max(1, conEv.length) * 100) + '%', background: E.COLOR[r].bg } }) : null))),
-        h('div', { class: 'kpi' }, h('span', null, 'Métricos cerrados (equipos con comisión)'), h('b', null, metCerr + ' / ' + com.length)),
-        h('div', { class: 'kpi' }, h('span', null, 'Total a pagar ' + (metCerr === com.length && com.length ? '(todo cerrado)' : '(proyectado con lo registrado)')), h('b', null, E.q(totalFinal))),
-        h('div', { class: 'kpi' }, h('span', null, 'Sin plan este mes'), h('b', null, String(filas.filter(x => !x.ev && !x.mt).length)))));
+        h('div', { class: 'kpi' }, h('span', null, 'Comisión calculada'), h('b', null, E.q(totalFinal)), h('em', null, metCerr === com.length && com.length ? 'Todo cerrado' : 'Proyectado con lo registrado')),
+        h('div', { class: 'kpi' }, h('span', null, 'Métricos pendientes'), h('b', null, String(pendMet)), h('em', null, 'Por capturar o revisar'))));
       const trs = filas.map(x => {
-        const est = E.calc.estadoEdd(x.ev), em = E.calc.estadoMet(x.mt);
-        return h('tr', { class: 'clic' + (x.p.d.activo === false ? ' inactiva' : ''), onclick: () => { location.hash = '#/ficha/' + per + '/' + x.p.id; } },
-          h('td', null, h('span', { class: 'nombre' }, x.p.d.nombre), h('span', { class: 'sub' }, (x.p.d.codigo || 's/c') + ' · ' + U.nombreEquipo(x.p.d.equipo_id) + (x.p.d.activo === false ? ' · inactivo' : ''))),
-          h('td', null, E.supervisorDe(x.p) || h('span', { class: 'muted' }, '—')),
-          h('td', null, U.chip(est), x.ev && x.ev.d.excepcion ? h('div', null, h('span', { class: 'chip exc' }, 'Excepción')) : null),
-          h('td', null, x.ev ? U.sem(x.ev.d.resultado_final, 'Pendiente') : h('span', { class: 'muted' }, '—')),
-          h('td', null, x.mt ? U.chip(em) : (x.com ? h('span', { class: 'chip sin' }, 'Sin métricos') : h('span', { class: 'muted peq' }, 'No comisiona'))),
-          h('td', { class: 'num' }, x.com && x.mt ? E.q(x.rm.base) : '—'),
-          h('td', { class: 'num' }, x.com && x.mt ? E.q(x.rm.calculado) : '—'),
-          h('td', { class: 'num' }, x.com && x.mt ? (x.rm.elegible ? E.q(x.rm.garantiaAplicada) : '—') : '—'),
-          h('td', { class: 'num' }, x.com && x.mt ? h('b', null, E.q(x.rm.final)) : '—'));
+        const est = E.calc.estadoEdd(x.ev);
+        return h('tr', { class: 'clic' + (x.p.d.activo === false ? ' inactiva' : ''), onclick: () => { A.personaSel = x.p.id; location.hash = '#/edd/' + x.p.id; } },
+          h('td', null, U.persona(x.p)),
+          h('td', null, h('div', null, E.supervisorDe(x.p) || h('span', { class: 'muted' }, 'Sin supervisor')), h('div', { style: { marginTop: '4px' } }, U.equipoPill(x.p.d.equipo_id))),
+          h('td', null, x.ev && x.ev.d.resultado_final ? U.sem(x.ev.d.resultado_final) : U.chip(est), x.ev && x.ev.d.resultado_final && !x.ev.d.cierre ? h('div', { class: 'sub' }, 'sin autorizar') : null, x.ev && x.ev.d.excepcion ? h('div', { style: { marginTop: '4px' } }, h('span', { class: 'chip exc' }, 'Plan individual')) : null),
+          h('td', { class: 'num' }, x.com && x.mt ? h('b', { style: { color: 'var(--ok)' } }, E.q(x.rm.final)) : h('span', { class: 'muted peq' }, x.com ? 'Sin métricos' : 'No comisiona')),
+          h('td', { class: 'num muted' }, '›'));
       });
-      const pie = com.length ? h('tr', null, h('td', { colspan: 5 }, 'Total equipos con comisión (' + com.length + ' personas)'),
-        h('td', { class: 'num' }, E.q(com.reduce((s, x) => s + x.rm.base, 0))), h('td', { class: 'num' }, E.q(com.reduce((s, x) => s + x.rm.calculado, 0))),
-        h('td', { class: 'num' }, E.q(com.reduce((s, x) => s + (x.rm.elegible ? x.rm.garantiaAplicada : 0), 0))), h('td', { class: 'num' }, E.q(totalFinal))) : null;
-      cuerpo.append(U.tabla([{ t: 'Gestor' }, { t: 'Supervisor' }, { t: 'EDD' }, { t: 'Resultado EDD' }, { t: 'Métricos' }, { t: 'Base', cls: 'num' }, { t: 'Calculado', cls: 'num' }, { t: 'Garantía', cls: 'num' }, { t: 'Total a pagar', cls: 'num' }], trs, pie));
-      cuerpo.append(h('p', { class: 'muted peq' }, 'El total solo suma a personas de equipos marcados "recibe comisión" que tienen métricos. Haz clic en una fila para abrir su evaluación.'));
+      const izq = h('div', { class: 'hoja' }, h('div', { class: 'hoja-cab' }, h('div', null, h('h2', null, 'Gestores del periodo'), h('p', null, 'Resumen por persona y equipo · clic para abrir su evaluación')),
+        U.btn('Administrar', () => { location.hash = '#/padron'; }, 'suave mini')),
+        U.tabla([{ t: 'Gestor' }, { t: 'Supervisor / equipo' }, { t: 'EDD' }, { t: 'Comisión', cls: 'num' }, { t: '' }], trs));
+      // Comisiones por equipo
+      const porEq = {};
+      com.forEach(x => { const k = x.p.d.equipo_id; const e = porEq[k] = porEq[k] || { n: 0, calc: 0, gar: 0, fin: 0 }; e.n++; e.calc += x.rm.calculado; e.gar += x.rm.elegible ? x.rm.garantiaAplicada : 0; e.fin += x.rm.final; });
+      const comCard = h('div', { class: 'hoja' }, h('div', { class: 'hoja-cab' }, h('div', null, h('h2', null, 'Comisiones del periodo'), h('p', null, 'Consolidado en quetzales')), h('span', { class: 'equipo-pill' }, 'GTQ')));
+      if (!com.length) comCard.append(h('div', { class: 'vacio', style: { padding: '18px' } }, h('div', { class: 'vacio-ico' }, 'Q'), h('b', null, 'Aún no hay cálculo'), h('p', { class: 'peq' }, 'Al registrar métricos, aquí aparece el total por equipo.')));
+      Object.entries(porEq).forEach(([k, e]) => comCard.append(h('div', { class: 'equipo-total' }, h('b', null, U.nombreEquipo(k)), h('small', null, e.n + ' persona(s) · calculado ' + E.q(e.calc) + (e.gar ? ' · garantía ' + E.q(e.gar) : '')), h('span', { class: 'monto' }, E.q(e.fin)))));
+      if (com.length) comCard.append(h('div', { class: 'equipo-total', style: { borderTop: '2px solid var(--linea)' } }, h('b', null, 'Total a pagar'), h('small', null, metCerr + ' de ' + com.length + ' métricos cerrados'), h('span', { class: 'monto', style: { color: 'var(--navy)' } }, E.q(totalFinal))));
+      comCard.append(h('div', { class: 'nota' }, h('b', null, 'Regla de cálculo'), h('br'), 'Base personal × ponderación × cumplimiento. La garantía mínima (' + cfg.garantia_pct + ' % de la base) se aplica solo en los dos primeros meses del gestor.'));
+      // Avance del mes
+      const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+      const paso = (t, a, b) => h('div', { class: 'paso' }, h('div', { class: 'paso-cab' }, h('span', null, t), h('span', null, a + ' / ' + b)), h('div', { class: 'progreso' }, h('i', { style: { width: pct(a, b) + '%' } })));
+      const avance = h('div', { class: 'hoja' }, h('div', { class: 'hoja-cab' }, h('div', null, h('h2', null, 'Avance del mes'), h('p', null, 'Del plan inicial al cierre'))),
+        paso('Planes EDD publicados', conEv.filter(x => x.ev.d.plan_inicial).length, conEv.length),
+        paso('EDD calificadas', conEv.filter(x => x.ev.d.items.length && x.ev.d.items.every(i => i.resultado) && x.ev.d.resultado_final).length, conEv.length),
+        paso('EDD autorizadas', cerradas.length, conEv.length),
+        paso('Métricos cerrados', metCerr, com.length));
+      // Pendientes
+      const alertas = [];
+      const garantias = E.personas(true).filter(p => E.comisiona(p) && !O.esSupervisorDeEquipo(p) && E.calc.garantia(p, per, cfg).requiereConfirmar);
+      if (garantias.length) alertas.push(['warn', garantias.length + ' garantía(s) de ingreso por confirmar', '#/planes']);
+      const sinPlan = filas.filter(x => !x.ev && x.p.d.activo !== false);
+      if (sinPlan.length) alertas.push(['warn', sinPlan.length + ' gestor(es) sin plan EDD este mes', '#/planes']);
+      const sinPub = conEv.filter(x => !x.ev.d.plan_inicial).length;
+      if (sinPub) alertas.push(['warn', sinPub + ' plan(es) EDD sin publicar como versión inicial', '#/planes']);
+      const malPeso = filas.filter(x => x.mt && x.mt.d.items.length && Math.abs(E.calc.sumaPesos(x.mt.d.items) - 100) > 0.001);
+      if (malPeso.length) alertas.push(['err', malPeso.length + ' plan(es) de métricos no suman 100 %', '#/met/' + malPeso[0].p.id]);
+      const sinTel = gestores.filter(x => !x.p.d.telefono_wa);
+      if (sinTel.length) alertas.push(['warn', sinTel.length + ' gestor(es) sin teléfono de WhatsApp', '#/padron']);
+      if (!E.plantilla()) alertas.push(['err', 'Falta la plantilla EDD para exportar a Excel', '#/config']);
+      const pend = h('div', { class: 'hoja' }, h('div', { class: 'hoja-cab' }, h('div', null, h('h2', null, 'Pendientes'), h('p', null, alertas.length ? 'Lo que falta para cerrar bien el mes' : 'Nada pendiente por ahora'))));
+      alertas.forEach(([k, t, href]) => pend.append(h('div', { class: 'alerta' + (k === 'err' ? ' err' : '') }, h('i'), h('div', null, t, ' · ', h('a', { href }, 'Ver')))));
+      cuerpo.append(h('div', { class: 'layout' }, izq, h('div', null, comCard, avance, pend)));
     }
   };
   function filasPanel(per, f) {
@@ -194,33 +266,9 @@
         const texto = ta.value.trim();
         if (!texto) { ta.classList.add('err'); throw new Error('Escribe la directriz.'); }
         if (!marcados.size) throw new Error('Marca al menos un equipo.');
-        const recs = [], omitidos = [];
-        equipos.filter(e => marcados.has(e.id)).forEach(e => {
-          const id = E.idPlan(per, e.id, 'edd'); const rec = E.db.planes.get(id);
-          const r = rec ? E.copiaRec(rec) : { id, d: { periodo_id: per, equipo_id: e.id, tipo: 'edd', items: [] } };
-          if (r.d.items.some(i => E.norm(i.texto) === E.norm(texto))) { omitidos.push(e.d.nombre + ': ya la tiene'); return; }
-          if (r.d.items.length >= cfg.planes_max) { omitidos.push(e.d.nombre + ': su plan ya tiene ' + cfg.planes_max + ' directrices'); return; }
-          r.d.items.push({ id: 'e' + E.uid(), texto }); recs.push(r);
-        });
-        await E.guardar('planes', recs, 'directriz para varios equipos');
-        let personas = 0;
-        if (aplicarYa.checked) for (const r of recs) {
-          const filas = O.previaAplicar(per, r.d.equipo_id, 'edd');
-          personas += await O.aplicarPlan(per, r.d.equipo_id, 'edd', filas, new Set());
-          const nuevo = r.d.items[r.d.items.length - 1];
-          const exc = [];
-          filas.filter(f => f.estado === 'excepcion' || f.estado === 'excede').forEach(f => {
-            if (!aExcepciones.checked) { omitidos.push(f.p.d.nombre + ': tiene plan individual (no se modificó)'); return; }
-            const ev = E.evaluacion(per, f.p.id); if (!ev || ev.d.cierre) return;
-            if (ev.d.items.some(i => E.norm(i.texto) === E.norm(texto))) return;
-            if (ev.d.items.length >= cfg.planes_max) { omitidos.push(f.p.d.nombre + ': su plan ya tiene ' + cfg.planes_max + ' directrices'); return; }
-            const c = E.copiaRec(ev); c.d.items.push({ id: nuevo.id, texto: nuevo.texto, origen: 'equipo', resultado: null }); exc.push(c);
-          });
-          filas.filter(f => f.estado === 'cerrado').forEach(f => omitidos.push(f.p.d.nombre + ': su evaluación ya está cerrada'));
-          if (exc.length) { await E.guardar('evaluaciones', exc, 'directriz para varios equipos'); personas += exc.length; }
-        }
-        E.toast('Directriz agregada a ' + recs.length + ' equipo(s)' + (aplicarYa.checked ? ' y aplicada a ' + personas + ' persona(s).' : '. Aplícala a cada equipo cuando quieras.'));
-        if (omitidos.length) E.modal({ titulo: 'Equipos no modificados', cuerpo: h('ul', { class: 'lista-simple' }, omitidos.map(x => h('li', null, x))) });
+        const r = await O.agregarDirectriz(per, texto, [...marcados], { aplicar: aplicarYa.checked, excepciones: aExcepciones.checked });
+        E.toast('Directriz agregada a ' + r.equipos + ' equipo(s)' + (aplicarYa.checked ? ' y aplicada a ' + r.personas + ' persona(s).' : '. Aplícala a cada equipo cuando quieras.'));
+        if (r.omitidos.length) E.modal({ titulo: 'No se modificaron', cuerpo: h('ul', { class: 'lista-simple' }, r.omitidos.map(x => h('li', null, x))) });
         A.refrescar();
       }, 'primario', { disabled: cerrado }));
   }

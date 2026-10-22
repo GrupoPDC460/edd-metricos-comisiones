@@ -72,7 +72,8 @@
   E.toast = function (msg, tipo) {
     const box = document.getElementById('toasts'); if (!box) return;
     const t = E.h('div', { class: 'toast ' + (tipo || 'ok'), role: 'status' }, msg);
-    box.append(t); setTimeout(() => t.classList.add('out'), 4200); setTimeout(() => t.remove(), 4700);
+    box.append(t); while (box.children.length > 3) box.firstChild.remove();
+    setTimeout(() => t.classList.add('out'), 4200); setTimeout(() => t.remove(), 4700);
   };
   E.modal = function ({ titulo, cuerpo, acciones, ancho }) {
     const root = document.getElementById('modales');

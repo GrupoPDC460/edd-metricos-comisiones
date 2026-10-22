@@ -26,6 +26,7 @@
     await E.cargar();
     $('login').hidden = true; $('app').hidden = false;
     $('quien').textContent = s.usuario + ' · ' + (s.rol === 'editor' ? 'puede consultar y editar' : s.rol);
+    $('avatar').textContent = String(s.usuario || '?').trim().split(/\s+/).slice(0, 2).map(x => x[0]).join('').toUpperCase(); $('avatar').title = s.usuario;
     const pers = E.periodos(); const guardado = localStorage.getItem('edd_periodo');
     A.periodo = pers.some(p => p.id === guardado) ? guardado : (pers.length ? A.periodoActual(pers) : null);
     if (!location.hash || location.hash === '#') location.hash = E.db.personas.size ? '#/panel' : '#/importar';
@@ -37,16 +38,22 @@
   };
   A.setPeriodo = id => { A.periodo = id; try { localStorage.setItem('edd_periodo', id); } catch (e) { } A.render(); };
 
+  A.NOMBRES = { panel: 'Resumen', edd: 'Evaluación EDD', met: 'Métricos y comisión', padron: 'Gestores', historial: 'Historial mensual', planes: 'Planes del mes', exportar: 'Exportar Excel', whatsapp: 'WhatsApp', importar: 'Importar archivos', config: 'Configuración', ficha: 'Evaluación EDD' };
+  // Selector de mes en la barra superior (cada mes conserva sus planes, resultados y aprobaciones)
   A.carril = function () {
     const c = $('carril'); c.innerHTML = '';
-    E.periodos().forEach(p => {
+    const pers = E.periodos();
+    const sel = h('select', { class: 'campo', id: 'mesSel', 'aria-label': 'Periodo', style: { width: 'auto', minWidth: '170px' } });
+    if (!pers.length) sel.append(h('option', { value: '' }, 'Sin meses'));
+    pers.forEach(p => {
       const evs = [...E.db.evaluaciones.values()].filter(e => e.d.periodo_id === p.id);
       const cerr = evs.filter(e => e.d.cierre).length;
-      const est = p.d.estado === 'cerrado' ? 'Cerrado' : (evs.length ? cerr + '/' + evs.length + ' EDD' : 'Sin planes');
-      c.append(h('button', { type: 'button', class: 'mes' + (p.id === A.periodo ? ' sel' : ''), title: E.periodo.nombre(p.id), onclick: () => A.setPeriodo(p.id), 'aria-pressed': p.id === A.periodo ? 'true' : 'false' },
-        E.periodo.corto(p.id), h('small', null, est)));
+      const op = h('option', { value: p.id }, E.periodo.nombre(p.id) + (p.d.estado === 'cerrado' ? ' · cerrado' : evs.length ? ' · ' + cerr + '/' + evs.length + ' EDD' : ''));
+      if (p.id === A.periodo) op.selected = true; sel.append(op);
     });
-    c.append(h('button', { type: 'button', class: 'mes nuevo', onclick: () => A.nuevoMes() }, '+ Nuevo mes'));
+    sel.append(h('option', { value: '__nuevo' }, '＋ Nuevo mes…'));
+    sel.addEventListener('change', () => { if (sel.value === '__nuevo') { sel.value = A.periodo || ''; A.nuevoMes(); } else A.setPeriodo(sel.value); });
+    c.append(sel);
   };
 
   A.nuevoMes = function () {
@@ -85,13 +92,14 @@
     const partes = (location.hash || '#/panel').slice(2).split('/').map(decodeURIComponent);
     A.ruta = partes;
     const nombre = partes[0] || 'panel';
-    document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('activo', a.dataset.r === nombre || (nombre === 'ficha' && a.dataset.r === 'panel')));
+    document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('activo', a.dataset.r === nombre || (nombre === 'ficha' && a.dataset.r === 'edd')));
+    $('crumb').textContent = A.NOMBRES[nombre] || 'Resumen';
     $('lateral').classList.remove('abierto');
     g.onbeforeunload = null;
     const vista = $('vista'); vista.innerHTML = '';
     const fn = A.vistas[nombre] || A.vistas.panel;
     try { const r = fn(vista, partes.slice(1)); if (r && r.catch) r.catch(E.errorToast); } catch (e) { E.errorToast(e); }
-    requestAnimationFrame(() => U.ajustarTextareas(vista));
+    requestAnimationFrame(() => U.ajustarTextareas(vista)); setTimeout(() => U.ajustarTextareas(vista), 350);
   };
   A.refrescar = () => { const y = g.scrollY; A.render(); requestAnimationFrame(() => g.scrollTo(0, y)); };
   A.recargar = async () => { await E.cargar(); A.refrescar(); E.toast('Datos actualizados.'); };
