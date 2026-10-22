@@ -193,9 +193,13 @@
       cuerpo.append(h('div', { class: 'layout' }, izq, h('div', null, comCard, avance, pend)));
     }
   };
+  // Un registro "tiene actividad" si ya se calificó, se registró cumplimiento o se cerró
+  O.conActividad = rec => !!(rec && (rec.d.cierre || rec.d.resultado_final || (rec.d.items || []).some(i => i.resultado || (i.cumplimiento != null && i.cumplimiento !== ''))));
+  // Las personas inactivas solo aparecen en un mes si ese mes ya tenía actividad (su historial se conserva)
+  O.vigenteEn = (p, per) => p.d.activo !== false || O.conActividad(E.evaluacion(per, p.id)) || O.conActividad(E.metricos(per, p.id));
   function filasPanel(per, f) {
     const cfg = E.conf();
-    let ps = E.personas(false).filter(p => E.evaluacion(per, p.id) || E.metricos(per, p.id) || (p.d.activo !== false && p.d.equipo_id && !O.esSupervisorDeEquipo(p)));
+    let ps = E.personas(false).filter(p => O.vigenteEn(p, per) && (E.evaluacion(per, p.id) || E.metricos(per, p.id) || (p.d.equipo_id && !O.esSupervisorDeEquipo(p))));
     ps = U.filtrar(ps, f);
     return ps.map(p => { const mt = E.metricos(per, p.id); return { p, ev: E.evaluacion(per, p.id), mt, rm: mt ? E.calc.metricos(mt, p, cfg) : null, com: E.comisiona(p) }; });
   }

@@ -46,7 +46,7 @@
     const sel = h('select', { class: 'campo', id: 'mesSel', 'aria-label': 'Periodo', style: { width: 'auto', minWidth: '170px' } });
     if (!pers.length) sel.append(h('option', { value: '' }, 'Sin meses'));
     pers.forEach(p => {
-      const evs = [...E.db.evaluaciones.values()].filter(e => e.d.periodo_id === p.id);
+      const evs = [...E.db.evaluaciones.values()].filter(e => e.d.periodo_id === p.id && (!E.ops || !E.ops.vigenteEn || E.ops.vigenteEn(E.persona(e.d.persona_id) || { d: {} }, p.id)));
       const cerr = evs.filter(e => e.d.cierre).length;
       const op = h('option', { value: p.id }, E.periodo.nombre(p.id) + (p.d.estado === 'cerrado' ? ' · cerrado' : evs.length ? ' · ' + cerr + '/' + evs.length + ' EDD' : ''));
       if (p.id === A.periodo) op.selected = true; sel.append(op);

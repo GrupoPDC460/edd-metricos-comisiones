@@ -137,7 +137,7 @@
     const cuerpo = h('div'); root.append(U.filtros(fHist, pintar), cuerpo);
     function filas() {
       return U.filtrar(E.personas(false), fHist).map(p => {
-        const meses = pers.map(per => ({ per, ev: E.evaluacion(per.id, p.id), mt: E.metricos(per.id, p.id) }));
+        const meses = pers.map(per => O.vigenteEn(p, per.id) ? { per, ev: E.evaluacion(per.id, p.id), mt: E.metricos(per.id, p.id) } : { per, ev: null, mt: null });
         if (!meses.some(m => m.ev || m.mt) && !p.d.historial_previo) return null;
         const conf = meses.filter(m => m.ev && m.ev.d.cierre);
         const cuenta = {}; conf.forEach(m => { cuenta[m.ev.d.resultado_final] = (cuenta[m.ev.d.resultado_final] || 0) + 1; });
@@ -187,9 +187,9 @@
     root.append(h('div', { class: 'hoja' }, h('h2', null, 'Meses a incluir'), h('div', { class: 'acciones' }, pers.map(p => h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: mesesExp.has(p.id), onchange: e => { if (e.target.checked) mesesExp.add(p.id); else mesesExp.delete(p.id); pintar(); } }), E.periodo.nombre(p.id)))),
       h('p', { class: 'muted peq' }, 'Plantilla: ' + tpl.archivo + ' (subida por ' + tpl.subida_por + ' el ' + E.fecha(tpl.fecha) + '). En Resumen solo se escribe el resultado de meses autorizados.')));
     root.append(U.filtros(fExp, () => { tocado = false; pintar(); }), cuerpo);
-    function candidatos() { return U.filtrar(E.personas(false), fExp).filter(p => [...mesesExp].some(per => E.evaluacion(per, p.id))); }
+    function candidatos() { return U.filtrar(E.personas(false), fExp).filter(p => [...mesesExp].some(per => E.evaluacion(per, p.id) && O.vigenteEn(p, per))); }
     function hojas(p) {
-      return [...mesesExp].sort().map(per => ({ per, ev: E.evaluacion(per, p.id) })).filter(x => x.ev).map(x => ({ periodo: x.per, items: x.ev.d.items.map(i => ({ texto: i.texto, resultado: i.resultado })), final: x.ev.d.resultado_final || '', comentarios: x.ev.d.comentarios || '', confirmado: !!x.ev.d.cierre }));
+      return [...mesesExp].sort().map(per => ({ per, ev: O.vigenteEn(p, per) ? E.evaluacion(per, p.id) : null })).filter(x => x.ev).map(x => ({ periodo: x.per, items: x.ev.d.items.map(i => ({ texto: i.texto, resultado: i.resultado })), final: x.ev.d.resultado_final || '', comentarios: x.ev.d.comentarios || '', confirmado: !!x.ev.d.cierre }));
     }
     pintar();
     function pintar() {
