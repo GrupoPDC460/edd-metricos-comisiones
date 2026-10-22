@@ -115,7 +115,7 @@
       if (!porSup && arch.length > 1) {
         const d = decision('equipo:' + p.codigo, 'Equipos', p.nombre + ' aparece en ' + arch.length + ' archivos de métricos',
           'No tiene supervisor en el Formato EDD y figura en ' + arch.map(a => a.m.archivo).join(' y ') + '. Elige a qué equipo pertenece.',
-          arch.filter(a => a.m.equipo).map(a => ({ valor: a.m.equipo.id, etiqueta: a.m.equipo.nombre })).concat([{ valor: '', etiqueta: 'Sin asignar por ahora' }]));
+          arch.filter(a => a.m.equipo).map(a => ({ valor: a.m.equipo.id, etiqueta: a.m.equipo.nombre })).concat([{ valor: 'sin', etiqueta: 'Sin asignar por ahora' }]));
         d.codigo = p.codigo;
       }
     });
@@ -255,7 +255,7 @@
   // Aplica las decisiones elegidas sobre la propuesta (se llama al cambiar una opción)
   I.aplicarDecision = function (prop, d) {
     if (d.id.startsWith('sup:')) { const eq = prop.equipos.find(e => e.id === d.equipo); eq.supervisor_codigo = d.valor && d.valor !== 'pendiente' ? Number(d.valor) : null; }
-    if (d.id.startsWith('equipo:')) { const p = prop.personas.find(x => x.codigo === d.codigo); p.equipo_id = d.valor || ''; p.equipoFuente = d.valor ? 'Decisión en la importación' : ''; }
+    if (d.id.startsWith('equipo:')) { const p = prop.personas.find(x => x.codigo === d.codigo); p.equipo_id = d.valor && d.valor !== 'sin' ? d.valor : ''; p.equipoFuente = p.equipo_id ? 'Decisión en la importación' : ''; }
     if (d.id.startsWith('base:')) { const p = prop.personas.find(x => x.codigo === d.codigo); p.base = d.valor && d.valor !== 'default' ? Number(d.valor) : null; }
     if (d.id.startsWith('fecha:')) { const p = prop.personas.find(x => x.codigo === d.codigo); p.fecha_ingreso = d.valor === 'previa' ? p.fecha_previa : null; }
     if (d.id.startsWith('hist:')) { const p = prop.personas.find(x => x.codigo === d.codigo); const h = p.historial[d.mes]; h.omitir = d.valor === 'omitir' || !d.valor; h.valor = d.valor === 'resumen' ? h.opciones.resumen : d.valor === 'hoja' ? h.opciones.hoja : null; }
