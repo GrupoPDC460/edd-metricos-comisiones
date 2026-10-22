@@ -45,27 +45,24 @@
     const aviso = (area, titulo, detalle, personas) => dudas.push({ id: 'a' + dudas.length, tipo: 'aviso', area, titulo, detalle, personas: personas || [] });
     const decision = (id, area, titulo, detalle, opciones, valor) => { const d = { id, tipo: 'decision', area, titulo, detalle, opciones, valor: valor == null ? null : valor }; dudas.push(d); return d; };
 
-    // ---------------- plantilla
-    let plantilla = null;
+    // ---------------- archivos EDD individuales: plantilla maestra e historial previo
+    let plantilla = null; const individuales = [];
+    for (const a of tplF) individuales.push({ archivo: a.nombre, leido: a, an: await E.excel.analizarPlantilla(a), hp: E.excel.historialPrevio(a, cfg.periodo_inicial) });
     if (tplF.length) {
-      const an = await E.excel.analizarPlantilla(tplF[0]);
-      const limpia = await E.excel.limpiarPlantilla(tplF[0].buf);
-      const meses = await E.excel.mesesDePlantilla(limpia.base64);
-      plantilla = { archivo: tplF[0].nombre, analisis: an, base64: limpia.base64, logo: limpia.logo, hojaMes: limpia.hojaMes, mesesResumen: meses };
-      const per = pad.personas.find(p => p.codigo === Number(an.resumen.codigo));
-      if (per && an.resumen.nombreGuardado && E.norm(an.resumen.nombreGuardado) !== E.norm(per.nombre))
-        aviso('Plantilla', 'La hoja Resumen de la plantilla muestra otro nombre para el código ' + an.resumen.codigo,
-          'Guardado: "' + an.resumen.nombreGuardado + '". En el padrón ese código es "' + per.nombre + '". El nombre venía de una fórmula a otro libro; en las exportaciones se escribe el nombre del padrón.');
-      an.mensuales.forEach(m => {
-        if (m.fechaE5) {
-          const esperado = E.periodo.hoja(m.fechaE5.slice(0, 7));
-          if (E.norm(esperado) !== E.norm(m.nombre)) aviso('Plantilla', 'La hoja "' + m.nombre + '" tiene la fecha ' + E.periodo.corto(m.fechaE5.slice(0, 7)), 'El nombre de la hoja no coincide con el mes de la celda E5. Esa hoja no se importa.');
-        }
-      });
-      const evaluadas = an.mensuales.filter(m => m.final || m.resultados);
-      if (evaluadas.length) aviso('Plantilla', 'La plantilla trae resultados de ' + evaluadas.map(m => m.nombre).join(', '), 'Son datos de una sola persona y de meses anteriores al inicio del sistema (' + E.periodo.nombre(cfg.periodo_inicial) + '). No se importan como historial; las hojas se quitan de la plantilla maestra.');
-      if (an.tieneVinculoExterno) aviso('Plantilla', 'La plantilla tenía vínculos a "Formato EDD.xlsx"', 'Se quitan: el libro exportado lleva los datos escritos y no pedirá actualizar vínculos.');
-    } else aviso('Plantilla', 'No subiste la plantilla EDD individual', 'Sin la plantilla no se puede exportar el Excel con el formato original. Puedes subirla después en Configuración.');
+      let idx = individuales.findIndex(x => x.an.plantillaOculta && x.an.plantillaMes === 'Mes- Año');
+      if (idx < 0) idx = Math.max(0, individuales.findIndex(x => x.an.plantillaOculta));
+      plantilla = await I.prepararPlantilla(individuales[idx]);
+      if (individuales.some(x => x.an.tieneVinculoExterno)) aviso('Plantilla', 'Los archivos EDD tienen fórmulas enlazadas a "Formato EDD.xlsx"', 'La plantilla maestra se limpia: el Excel exportado lleva los datos escritos (sin fórmulas anidadas ni vínculos a otros libros) y no pedirá actualizar vínculos.');
+      const malNombre = individuales.filter(x => { const per = pad.personas.find(p => p.codigo === Number(x.hp.codigo)); return per && x.hp.nombreGuardado && E.norm(x.hp.nombreGuardado) !== E.norm(per.nombre); });
+      if (malNombre.length) aviso('Archivos EDD', 'Nombre distinto en la hoja Resumen de ' + malNombre.length + ' archivo(s)', malNombre.map(x => x.archivo + ': código ' + x.hp.codigo + ' muestra "' + x.hp.nombreGuardado + '"').join(' · ') + '. Venía de una fórmula a otro libro; al exportar se escribe el nombre del padrón.');
+      const malHoja = [];
+      individuales.forEach(x => x.an.mensuales.forEach(m => { if (m.fechaE5 && !E.norm(m.nombre).includes(E.MESES[Number(m.fechaE5.slice(5, 7)) - 1].toLowerCase())) malHoja.push(x.archivo.slice(0, 5) + ' "' + m.nombre + '" (fecha ' + E.periodo.corto(m.fechaE5.slice(0, 7)) + ')'); }));
+      if (malHoja.length) aviso('Archivos EDD', 'Hojas cuyo nombre no coincide con su mes', malHoja.join(' · ') + '. Estas hojas no se importan: los planes de ' + E.periodo.nombre(cfg.periodo_inicial) + ' se toman del Formato EDD.');
+      const sinPadron = individuales.filter(x => !pad.personas.some(p => p.codigo === Number(x.hp.codigo)));
+      if (sinPadron.length) aviso('Archivos EDD', sinPadron.length + ' archivo(s) sin persona en el padrón', sinPadron.map(x => x.archivo).join(', ') + '. No se usan para historial.');
+      const vistos = {}; individuales.forEach(x => { (vistos[x.hp.codigo] = vistos[x.hp.codigo] || []).push(x.archivo); });
+      Object.values(vistos).filter(l => l.length > 1).forEach(l => aviso('Archivos EDD', 'Archivo repetido para la misma persona', l.join(' y ') + '. Se usa el primero.'));
+    } else aviso('Plantilla', 'No subiste archivos EDD individuales', 'Sin al menos uno no se puede exportar el Excel con el formato original. Puedes subirlo después en Configuración.');
 
     // ---------------- personas
     const existentes = new Map(E.personas().filter(p => p.d.codigo != null).map(p => [Number(p.d.codigo), p]));
@@ -191,6 +188,43 @@
       } else if (p.equipo_id && (equipos.find(e => e.id === p.equipo_id) || {}).comisiona) aviso('Garantía', p.nombre + ': sin fecha de ingreso', 'No se puede saber si está en sus dos primeros meses. Complétala en Padrón.', [p.codigo]);
     });
 
+    // ---------------- historial previo (antes del mes de inicio) desde los archivos individuales
+    const MESN = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const usados = new Set(); let conHist = 0; const excluidos = [];
+    individuales.forEach(x => {
+      const p = porCodigo.get(Number(x.hp.codigo)); if (!p || usados.has(p.codigo)) return; usados.add(p.codigo);
+      p.archivoEdd = x.archivo; p.historial = {};
+      Object.entries(x.hp.meses).forEach(([mes, v]) => {
+        const r = v.resumen || null, hh = v.hoja ? v.hoja.valor : null;
+        p.historial[mes] = { valor: r || hh, archivo: x.archivo, conflicto: !!(r && hh && r !== hh), opciones: { resumen: r, hoja: hh },
+          fuente: r && hh ? 'Resumen y hoja "' + v.hoja.nombre + '"' : r ? 'Hoja Resumen' : 'Hoja "' + v.hoja.nombre + '" (la hoja Resumen no lo mostraba)' };
+      });
+      x.hp.sinFecha.forEach(sf => {
+        const m = new RegExp('(' + MESN.join('|') + ')\\s*-?\\s*(\\d{4})', 'i').exec(E.norm(sf.hoja));
+        if (!m) return;
+        const mes = E.periodo.id(Number(m[2]), MESN.indexOf(m[1].toLowerCase()) + 1);
+        if (mes >= cfg.periodo_inicial || p.historial[mes]) return;
+        p.historial[mes] = { valor: sf.valor, archivo: x.archivo, conflicto: false, opciones: {}, fuente: 'Hoja "' + sf.hoja + '" (mes tomado del nombre; la celda de fecha está vacía)' };
+      });
+      const ing = p.fecha_ingreso || p.fecha_previa;
+      Object.entries(p.historial).forEach(([mes, h]) => { if (ing && mes < ing.slice(0, 7)) { h.excluido = 'anterior a su fecha de ingreso (' + E.fechaCorta(ing) + ')'; excluidos.push(p.nombre + ' ' + E.periodo.corto(mes)); } });
+      if (Object.keys(p.historial).length) conHist++;
+    });
+    if (conHist) {
+      decision('historial', 'Historial', 'Resultados anteriores a ' + E.periodo.nombre(cfg.periodo_inicial) + ' en la hoja Resumen',
+        conHist + ' archivo(s) individual(es) traen resultados de meses anteriores (revísalos en la pestaña "Archivos EDD"). El sistema arranca en ' + E.periodo.nombre(cfg.periodo_inicial) + '; estos resultados solo se escribirían como historial en la hoja Resumen del Excel exportado. No cuentan para el acumulado del sistema.',
+        [{ valor: 'incluir', etiqueta: 'Incluirlos en la hoja Resumen tal como vienen en cada archivo' }, { valor: 'no', etiqueta: 'No incluirlos: el historial empieza en ' + E.periodo.nombre(cfg.periodo_inicial) }]);
+      personas.forEach(p => Object.entries(p.historial || {}).forEach(([mes, h]) => {
+        if (!h.conflicto || h.excluido) return;
+        const d = decision('hist:' + p.codigo + ':' + mes, 'Historial', p.nombre + ': dos resultados para ' + E.periodo.corto(mes), 'La hoja Resumen dice "' + h.opciones.resumen + '" y la hoja del mes dice "' + h.opciones.hoja + '".',
+          [{ valor: 'resumen', etiqueta: 'Usar "' + h.opciones.resumen + '" (Resumen)' }, { valor: 'hoja', etiqueta: 'Usar "' + h.opciones.hoja + '" (hoja del mes)' }, { valor: 'omitir', etiqueta: 'No incluir ese mes' }]);
+        d.codigo = p.codigo; d.mes = mes;
+      }));
+      if (excluidos.length) aviso('Historial', 'Resultados con fecha anterior al ingreso de la persona', excluidos.join(', ') + '. Parecen copiados de otro archivo; no se incluyen.');
+      const soloHoja = personas.filter(p => Object.values(p.historial || {}).some(h => !h.opciones.resumen && h.opciones.hoja && !h.excluido));
+      if (soloHoja.length) aviso('Historial', 'Meses que la hoja Resumen no mostraba', soloHoja.map(p => p.nombre).join(', ') + ': el resultado estaba en la hoja del mes, pero la fórmula de Resumen apuntaba a otra celda.');
+    }
+
     // ---------------- teléfonos
     const porTel = {};
     personas.forEach(p => { if (p.telefono) (porTel[p.telefono] = porTel[p.telefono] || []).push(p); });
@@ -204,15 +238,27 @@
       [{ valor: 'si', etiqueta: 'Revisé la lista y está correcta' }]);
 
     personas.forEach(p => { p.supervisorEsperado = equipos.some(eq => Number(eq.supervisor_codigo) === p.codigo); });
-    return { periodo, archivos: leidos.map(a => ({ nombre: a.nombre, tipo: a.tipo })), padron: pad, metricos: mets, plantilla, equipos, personas, dudas, publicarInicial: true };
+    return { periodo, archivos: leidos.map(a => ({ nombre: a.nombre, tipo: a.tipo })), padron: pad, metricos: mets, plantilla, individuales, equipos, personas, dudas, publicarInicial: true };
   };
 
+  I.prepararPlantilla = async function (x) {
+    const limpia = await E.excel.limpiarPlantilla(x.leido.buf);
+    return { archivo: x.archivo, analisis: x.an, base64: limpia.base64, logo: limpia.logo, hojaMes: limpia.hojaMes, mesesResumen: await E.excel.mesesDePlantilla(limpia.base64) };
+  };
+  I.historialFinal = (prop, p) => {
+    const d = prop.dudas.find(x => x.id === 'historial');
+    if (!d || d.valor !== 'incluir' || !p.historial) return null;
+    const out = {};
+    Object.entries(p.historial).forEach(([mes, h]) => { if (!h.excluido && h.valor && !h.omitir) out[mes] = { resultado: h.valor, fuente: h.fuente, archivo: h.archivo }; });
+    return Object.keys(out).length ? out : null;
+  };
   // Aplica las decisiones elegidas sobre la propuesta (se llama al cambiar una opción)
   I.aplicarDecision = function (prop, d) {
     if (d.id.startsWith('sup:')) { const eq = prop.equipos.find(e => e.id === d.equipo); eq.supervisor_codigo = d.valor && d.valor !== 'pendiente' ? Number(d.valor) : null; }
     if (d.id.startsWith('equipo:')) { const p = prop.personas.find(x => x.codigo === d.codigo); p.equipo_id = d.valor || ''; p.equipoFuente = d.valor ? 'Decisión en la importación' : ''; }
     if (d.id.startsWith('base:')) { const p = prop.personas.find(x => x.codigo === d.codigo); p.base = d.valor && d.valor !== 'default' ? Number(d.valor) : null; }
     if (d.id.startsWith('fecha:')) { const p = prop.personas.find(x => x.codigo === d.codigo); p.fecha_ingreso = d.valor === 'previa' ? p.fecha_previa : null; }
+    if (d.id.startsWith('hist:')) { const p = prop.personas.find(x => x.codigo === d.codigo); const h = p.historial[d.mes]; h.omitir = d.valor === 'omitir' || !d.valor; h.valor = d.valor === 'resumen' ? h.opciones.resumen : d.valor === 'hoja' ? h.opciones.hoja : null; }
   };
   I.pendientes = prop => prop.dudas.filter(d => d.tipo === 'decision' && (d.valor == null || d.valor === ''));
 
@@ -236,8 +282,10 @@
         equipo_id: p.equipo_id || null, supervisor_id: null, activo: !!p.activo, fecha_ingreso: p.fecha_ingreso || null,
         telefono_wa: p.telefono || '', agente: p.agente || '', base_comision: p.base == null ? null : p.base, notas: p.notas.join('. '),
         origen: { archivo: prop.archivos.find(a => a.tipo === 'padron').nombre, fila: p.fila, fecha: ahora },
+        historial_previo: I.historialFinal(prop, p),
       }
     }));
+    const personasHist = prop.personas.filter(p => p.existe && I.historialFinal(prop, p)).map(p => { const r = E.copiaRec(E.db.personas.get(p.id)); r.d.historial_previo = I.historialFinal(prop, p); return r; });
     const planes = [], evals = [], mets = [];
     const eqIds = [...new Set(prop.personas.map(p => p.equipo_id).filter(Boolean))];
     const conPlan = prop.personas.filter(p => p.activo && !(E.evaluacion(per, p.id)));
@@ -284,7 +332,7 @@
     });
     const maxItems = Math.max(5, ...evals.map(e => e.d.items.length));
     const periodo = E.db.periodos.get(per) ? null : { id: per, d: { nombre: E.periodo.nombre(per), num_planes: Math.min(maxItems, E.conf().planes_max), estado: 'abierto', creado_por: quien, creado: ahora } };
-    return { equipos, personas, planes, evals, mets, periodo };
+    return { equipos, personas, personasHist, planes, evals, mets, periodo };
   };
 
   I.aplicar = async function (prop, progreso) {
@@ -301,6 +349,7 @@
     }
     paso('Equipos'); await E.guardar('equipos', reg.equipos, 'importación');
     paso('Personas'); await E.guardar('personas', reg.personas, 'importación');
+    if (reg.personasHist.length) await E.guardar('personas', reg.personasHist, 'historial previo desde archivos EDD');
     if (reg.periodo) { paso('Periodo'); await E.guardar('periodos', [reg.periodo], 'importación'); }
     paso('Planes de equipo'); await E.guardar('planes', reg.planes, 'importación');
     paso('Evaluaciones EDD'); await E.guardar('evaluaciones', reg.evals, 'importación');

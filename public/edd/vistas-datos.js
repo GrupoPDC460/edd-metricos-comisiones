@@ -56,6 +56,7 @@
       U.campo('Base de comisión (Q)', c.base, 'Vacío = base predeterminada.')),
       h('div', { style: { marginTop: '10px' } }, U.campo('Notas', c.notas)),
       h('div', { class: 'acciones', style: { marginTop: '10px' } }, h('label', { class: 'check' }, c.activo, 'Activo'), h('label', { class: 'check' }, c.esSup, 'Tiene equipo a cargo')),
+      p && p.d.historial_previo ? h('p', { class: 'muted peq' }, 'Historial anterior al sistema (de su archivo EDD): ', Object.entries(p.d.historial_previo).sort().map(([m, x]) => h('span', { title: x.fuente, style: { marginRight: '6px' } }, E.periodo.corto(m) + ' ', U.sem(x.resultado)))) : null,
       p && p.d.garantia ? h('p', { class: 'muted peq' }, 'Garantía confirmada para ' + p.d.garantia.periodos.map(E.periodo.nombre).join(', ') + ' por ' + p.d.garantia.confirmado_por + '.') : null,
       p ? h('p', { class: 'muted peq' }, 'Última modificación: ' + (p.ub || '—') + ' · ' + E.fechaHora(p.ua) + (d.origen ? ' · origen: ' + d.origen.archivo + ', fila ' + d.origen.fila : '')) : null);
     E.modal({
@@ -120,7 +121,7 @@
     function filas() {
       return U.filtrar(E.personas(false), fHist).map(p => {
         const meses = pers.map(per => ({ per, ev: E.evaluacion(per.id, p.id), mt: E.metricos(per.id, p.id) }));
-        if (!meses.some(m => m.ev || m.mt)) return null;
+        if (!meses.some(m => m.ev || m.mt) && !p.d.historial_previo) return null;
         const conf = meses.filter(m => m.ev && m.ev.d.cierre);
         const cuenta = {}; conf.forEach(m => { cuenta[m.ev.d.resultado_final] = (cuenta[m.ev.d.resultado_final] || 0) + 1; });
         const pagado = E.r2(meses.filter(m => m.mt && m.mt.d.cierre && E.comisiona(p)).reduce((s, m) => s + m.mt.d.cierre.final, 0));
@@ -131,9 +132,10 @@
     function pintar() {
       cuerpo.innerHTML = '';
       const fs = filas();
-      cuerpo.append(U.tabla([{ t: 'Persona' }].concat(pers.map(x => ({ t: E.periodo.corto(x.id) })), [{ t: 'Meses confirmados', cls: 'num' }, { t: 'Excede', cls: 'num' }, { t: 'Alcanza', cls: 'num' }, { t: 'Necesita mejorar', cls: 'num' }, { t: 'Crítico', cls: 'num' }, { t: 'Comisión pagada', cls: 'num' }]),
-        fs.map(f => h('tr', { class: 'clic', onclick: () => { const ult = f.meses.filter(m => m.ev || m.mt).pop(); location.hash = '#/ficha/' + ult.per.id + '/' + f.p.id; } },
+      cuerpo.append(U.tabla([{ t: 'Persona' }, { t: 'Antes del sistema' }].concat(pers.map(x => ({ t: E.periodo.corto(x.id) })), [{ t: 'Meses confirmados', cls: 'num' }, { t: 'Excede', cls: 'num' }, { t: 'Alcanza', cls: 'num' }, { t: 'Necesita mejorar', cls: 'num' }, { t: 'Crítico', cls: 'num' }, { t: 'Comisión pagada', cls: 'num' }]),
+        fs.map(f => h('tr', { class: 'clic', onclick: () => { const ult = f.meses.filter(m => m.ev || m.mt).pop(); if (ult) location.hash = '#/ficha/' + ult.per.id + '/' + f.p.id; } },
           h('td', null, h('span', { class: 'nombre' }, f.p.d.nombre), h('span', { class: 'sub' }, (f.p.d.codigo || '') + ' · ' + U.nombreEquipo(f.p.d.equipo_id))),
+          h('td', { class: 'peq' }, f.p.d.historial_previo ? Object.entries(f.p.d.historial_previo).sort().map(([m, x]) => h('div', { title: x.fuente }, E.periodo.corto(m) + ' ', U.sem(x.resultado))) : h('span', { class: 'muted' }, '—')),
           f.meses.map(m => h('td', null, m.ev ? (m.ev.d.cierre ? U.sem(m.ev.d.resultado_final) : h('span', { class: 'pendiente peq' }, 'en curso')) : h('span', { class: 'muted' }, '—'),
             m.mt && m.mt.d.cierre && E.comisiona(f.p) ? h('span', { class: 'sub' }, E.q(m.mt.d.cierre.final)) : null)),
           h('td', { class: 'num' }, String(f.conf)), E.RESULTADOS.map(r => h('td', { class: 'num' }, String(f.cuenta[r] || 0))), h('td', { class: 'num' }, E.q(f.pagado))))));
@@ -182,11 +184,12 @@
       const avisos = E.excel.revisionPrevia(todasHojas, { mesesResumen: tpl.meses_resumen || [] });
       const borrador = todasHojas.filter(x => !x.confirmado).length;
       if (borrador) avisos.push(borrador + ' hoja(s) mensual(es) corresponden a evaluaciones sin autorizar: se exportan con lo registrado, pero su resultado no se escribe en Resumen.');
+      const conPrevio = sel.filter(p => p.d.historial_previo).length;
       cuerpo.append(h('div', { class: 'hoja' }, h('div', { class: 'hoja-cab' }, h('h2', null, 'Revisión antes de generar'),
         h('div', { class: 'acciones' },
           U.btn('Descargar Excel', async () => { if (sel.length !== 1) throw new Error('Elige una sola persona para descargar un archivo individual.'); await descargarUno(sel[0]); }, '', { disabled: sel.length !== 1 }),
           U.btn('Descargar ZIP (' + sel.length + ' archivos)', () => descargarZip(sel), 'primario', { disabled: !sel.length }))),
-        h('p', null, h('b', null, sel.length + ' persona(s)'), ' · ' + todasHojas.length + ' hoja(s) mensual(es) · un archivo Excel separado por persona.'),
+        h('p', null, h('b', null, sel.length + ' persona(s)'), ' · ' + todasHojas.length + ' hoja(s) mensual(es) · un archivo Excel separado por persona.' + (conPrevio ? ' ' + conPrevio + ' llevan además su historial anterior a ' + E.periodo.nombre(E.conf().periodo_inicial) + ' en la hoja Resumen.' : '')),
         avisos.length ? h('div', { class: 'aviso warn' }, h('b', null, 'Diferencias con la plantilla original:'), h('ul', null, avisos.map(a => h('li', null, a)))) : h('div', { class: 'aviso ok' }, 'El formato de la plantilla se conserva sin cambios para estos datos.')));
       cuerpo.append(U.tabla([{ t: '' }, { t: 'Persona' }, { t: 'Equipo' }, { t: 'Hojas' }, { t: 'Archivo' }], cs.map(p => {
         const hs = hojas(p);
@@ -195,11 +198,11 @@
           h('td', null, hs.map(x => E.periodo.hoja(x.periodo) + (x.confirmado ? '' : ' (sin autorizar)')).join(', ')), h('td', { class: 'peq muted' }, nombreLibro(p)));
       })));
     }
-    async function descargarUno(p) { const b = await E.excel.generarLibro(tpl.base64, { codigo: p.d.codigo, nombre: p.d.nombre, rol: p.d.rol }, hojas(p)); E.descargar(b, nombreLibro(p)); E.toast('Excel generado: ' + nombreLibro(p)); }
+    async function descargarUno(p) { const b = await E.excel.generarLibro(tpl.base64, { codigo: p.d.codigo, nombre: p.d.nombre, rol: p.d.rol }, hojas(p), p.d.historial_previo); E.descargar(b, nombreLibro(p)); E.toast('Excel generado: ' + nombreLibro(p)); }
     async function descargarZip(sel) {
       if (!await E.confirmar('Generar ZIP', 'Se generarán ' + sel.length + ' archivos, uno por persona: ' + sel.map(p => p.d.nombre).join(', ') + '.', 'Generar')) return;
       const zip = new g.JSZip(); let n = 0;
-      for (const p of sel) { zip.file(nombreLibro(p), await E.excel.generarLibro(tpl.base64, { codigo: p.d.codigo, nombre: p.d.nombre, rol: p.d.rol }, hojas(p))); n++; if (n % 5 === 0) E.toast('Generados ' + n + ' de ' + sel.length + '…'); }
+      for (const p of sel) { zip.file(nombreLibro(p), await E.excel.generarLibro(tpl.base64, { codigo: p.d.codigo, nombre: p.d.nombre, rol: p.d.rol }, hojas(p), p.d.historial_previo)); n++; if (n % 5 === 0) E.toast('Generados ' + n + ' de ' + sel.length + '…'); }
       const blob = await zip.generateAsync({ type: 'blob' });
       const etiqueta = fExp.equipo && fExp.equipo !== '__sin' ? U.nombreArchivo(U.nombreEquipo(fExp.equipo)) : 'Padron';
       E.descargar(blob, 'EDD_' + etiqueta + '_' + new Date().toISOString().slice(0, 10) + '.zip'); E.toast('ZIP listo con ' + n + ' archivos.');
@@ -254,17 +257,28 @@
     zona.addEventListener('dragleave', () => zona.classList.remove('sobre'));
     zona.addEventListener('drop', e => { e.preventDefault(); zona.classList.remove('sobre'); agregar([...e.dataTransfer.files]); });
     const periodo = U.select(Array.from({ length: 6 }, (_, i) => E.periodo.sumar(E.conf().periodo_inicial, i)).map(id => ({ v: id, t: E.periodo.nombre(id) })), E.conf().periodo_inicial);
-    const tipos = { padron: 'Padrón (Formato EDD)', plantilla: 'Plantilla EDD individual', metricos: 'Métricos de equipo' };
+    const tipos = { padron: 'Padrón (Formato EDD)', plantilla: 'Archivo EDD individual', metricos: 'Métricos de equipo' };
+    const analizarBtn = U.btn('Analizar archivos', async () => {
+      if (leyendo > 0) throw new Error('Espera a que termine la lectura de los archivos.');
+      estado.textContent = 'Analizando…';
+      imp.prop = await E.importar.analizar(imp.leidos.filter(a => a.tipo), { periodo: periodo.value }); imp.tab = 'resumen'; A.refrescar();
+    }, 'primario');
     const pintarLista = () => { lista.innerHTML = ''; imp.leidos.forEach((a, i) => lista.append(h('div', { class: 'archivo' }, h('span', null, h('b', null, a.nombre), ' · ', a.tipo ? tipos[a.tipo] : h('span', { style: { color: 'var(--err)' } }, 'No se reconoce el formato')), h('button', { class: 'btn mini fantasma', type: 'button', onclick: () => { imp.leidos.splice(i, 1); pintarLista(); } }, 'Quitar')))); };
+    let leyendo = 0;
+    const estado = h('p', { class: 'muted peq', 'aria-live': 'polite' });
     async function agregar(files) {
-      for (const f of files) { try { const a = await E.excel.leer(f); imp.leidos = imp.leidos.filter(x => x.nombre !== a.nombre).concat([a]); } catch (e) { E.toast('No se pudo leer ' + f.name + ': ' + e.message, 'err'); } }
-      pintarLista();
+      leyendo += files.length; analizarBtn.disabled = true;
+      for (const f of files) {
+        estado.textContent = 'Leyendo ' + f.name + '… (' + leyendo + ' pendiente' + (leyendo > 1 ? 's' : '') + ')';
+        await new Promise(r => setTimeout(r, 0));
+        try { const a = await E.excel.leer(f); imp.leidos = imp.leidos.filter(x => x.nombre !== a.nombre).concat([a]); } catch (e) { E.toast('No se pudo leer ' + f.name + ': ' + e.message, 'err'); }
+        leyendo--; pintarLista();
+      }
+      estado.textContent = imp.leidos.length + ' archivo(s) listos.'; analizarBtn.disabled = leyendo > 0;
     }
     pintarLista();
     root.append(h('div', { class: 'hoja' }, zona, h('div', { class: 'rejilla', style: { marginTop: '14px' } }, U.campo('Mes al que corresponden los planes del Formato EDD', periodo, 'El sistema arranca en ' + E.periodo.nombre(E.conf().periodo_inicial) + '; no se crean meses anteriores.')),
-      h('div', { class: 'acciones', style: { marginTop: '14px' } }, U.btn('Analizar archivos', async () => {
-        imp.prop = await E.importar.analizar(imp.leidos.filter(a => a.tipo), { periodo: periodo.value }); imp.tab = 'resumen'; A.refrescar();
-      }, 'primario'))));
+      h('div', { class: 'acciones', style: { marginTop: '14px' } }, analizarBtn, estado)));
     E.api.importaciones().then(l => {
       if (!l.length) return;
       root.append(h('div', { class: 'hoja' }, h('h2', null, 'Importaciones anteriores'), U.tabla([{ t: 'Fecha' }, { t: 'Usuario' }, { t: 'Archivos' }, { t: 'Guardado' }], l.map(x => h('tr', null, h('td', null, E.fechaHora(x.data.fecha)), h('td', null, x.data.usuario), h('td', { class: 'peq' }, x.data.archivos.map(a => a.nombre).join(', ')),
@@ -274,11 +288,11 @@
   function pasoRevision(root) {
     const prop = imp.prop;
     const pend = E.importar.pendientes(prop);
-    const tabs = [{ k: 'resumen', t: 'Resumen' }, { k: 'mapeo', t: 'Mapeo detectado' }, { k: 'equipos', t: 'Equipos' }, { k: 'personas', t: 'Personas (' + prop.personas.length + ')' }, { k: 'dudas', t: 'Dudas', n: pend.length || null }, { k: 'guardar', t: 'Vista previa y confirmar' }];
-    root.append(h('div', { class: 'acciones', style: { marginBottom: '10px' } }, U.btn('← Cambiar archivos', () => { imp.prop = null; A.refrescar(); }), h('span', { class: 'muted peq' }, prop.archivos.map(a => a.nombre).join(' · '))));
+    const tabs = [{ k: 'resumen', t: 'Resumen' }, { k: 'mapeo', t: 'Mapeo detectado' }, { k: 'equipos', t: 'Equipos' }, { k: 'personas', t: 'Personas (' + prop.personas.length + ')' }, (prop.individuales || []).length ? { k: 'archivos', t: 'Archivos EDD (' + prop.individuales.length + ')' } : null, { k: 'dudas', t: 'Dudas', n: pend.length || null }, { k: 'guardar', t: 'Vista previa y confirmar' }].filter(Boolean);
+    root.append(h('div', { class: 'acciones', style: { marginBottom: '10px' } }, U.btn('← Cambiar archivos', () => { imp.prop = null; A.refrescar(); }), h('span', { class: 'muted peq', title: prop.archivos.map(a => a.nombre).join('\n') }, prop.archivos.length + ' archivos: ' + Object.entries(prop.archivos.reduce((o, a) => (o[a.tipo] = (o[a.tipo] || 0) + 1, o), {})).map(([t, n]) => n + ' ' + ({ padron: 'padrón', plantilla: 'EDD individuales', metricos: 'de métricos' }[t] || t)).join(', '))));
     root.append(U.pestanas(tabs, imp.tab, k => { imp.tab = k; A.refrescar(); }));
     const c = h('div', { class: 'hoja' }); root.append(c);
-    ({ resumen: tResumen, mapeo: tMapeo, equipos: tEquipos, personas: tPersonas, dudas: tDudas, guardar: tGuardar }[imp.tab])(c, prop, pend);
+    ({ resumen: tResumen, mapeo: tMapeo, equipos: tEquipos, personas: tPersonas, archivos: tArchivos, dudas: tDudas, guardar: tGuardar }[imp.tab] || tResumen)(c, prop, pend);
   }
   function tResumen(c, prop, pend) {
     const dec = prop.dudas.filter(d => d.tipo === 'decision'), av = prop.dudas.filter(d => d.tipo === 'aviso');
@@ -320,6 +334,23 @@
         h('td', { style: { minWidth: '170px' } }, eq, p.equipoFuente ? h('span', { class: 'sub' }, p.equipoFuente) : null), h('td', null, f), h('td', { style: { minWidth: '150px' } }, t), h('td', { style: { width: '110px' } }, b),
         h('td', { class: 'peq' }, p.edd.length ? p.edd.length + ' directriz(es)' : '—'), h('td', { class: 'peq' }, p.met.length ? p.met.map(m => m.peso + '%').join(' / ') : '—'));
     })));
+  }
+  function tArchivos(c, prop) {
+    const ind = prop.individuales || [];
+    const sel = U.select(ind.map(x => ({ v: x.archivo, t: x.archivo + (x.an.plantillaOculta ? '' : ' (hoja de mes visible)') })), prop.plantilla && prop.plantilla.archivo, async v => {
+      const x = ind.find(y => y.archivo === v); try { prop.plantilla = await E.importar.prepararPlantilla(x); E.toast('Plantilla maestra: ' + v); } catch (e) { E.errorToast(e); }
+    });
+    c.append(h('h2', null, 'Archivos EDD individuales'),
+      h('p', null, 'Uno de ellos sirve de plantilla maestra: se le quitan los datos de la persona, las fórmulas enlazadas y las hojas de meses, y se conserva el diseño (Resumen, hoja "Plan de trabajo", semáforo, bordes y logo). Con esa plantilla se genera el archivo de cada gestor.'),
+      h('div', { style: { maxWidth: '640px' } }, U.campo('Plantilla maestra', sel, 'Se recomienda una con la hoja "Mes- Año" oculta: es el formato estándar (columna de criterios de 46.9).')),
+      h('h3', { style: { marginTop: '16px' } }, 'Resultados anteriores a ' + E.periodo.nombre(E.conf().periodo_inicial)),
+      h('p', { class: 'muted peq' }, 'Leídos de la hoja Resumen y de las hojas de cada mes. Solo se usan si en Dudas eliges incluirlos; se escriben como historial en la hoja Resumen del Excel. Pasa el cursor sobre un resultado para ver de dónde viene.'));
+    const meses = [...new Set(prop.personas.flatMap(p => Object.keys(p.historial || {})))].sort();
+    c.append(U.tabla([{ t: 'Persona' }, { t: 'Archivo' }].concat(meses.map(m => ({ t: E.periodo.corto(m) }))), prop.personas.filter(p => p.archivoEdd).map(p => h('tr', null,
+      h('td', null, h('span', { class: 'nombre' }, p.nombre), h('span', { class: 'sub' }, p.codigo)), h('td', { class: 'peq muted' }, p.archivoEdd),
+      meses.map(m => { const x = (p.historial || {})[m]; if (!x) return h('td', null, h('span', { class: 'muted' }, '—'));
+        return h('td', { title: x.fuente + (x.excluido ? ' · no se incluye: ' + x.excluido : '') + (x.conflicto ? ' · dos valores distintos: decide en Dudas' : '') },
+          x.excluido ? h('span', { class: 'pendiente peq' }, 'excluido') : U.sem(x.valor, x.conflicto ? 'Por decidir' : '—'), !x.opciones.resumen && !x.excluido ? h('span', { class: 'sub' }, 'solo en hoja') : null); })))));
   }
   function tDudas(c, prop) {
     const dec = prop.dudas.filter(d => d.tipo === 'decision'), av = prop.dudas.filter(d => d.tipo === 'aviso');

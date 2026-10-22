@@ -18,7 +18,7 @@
     'No Cumple': { bg: '#F37474', fg: '#3D0606' },
     'Excede Expectativas': { bg: '#4E95D9', fg: '#04121F' },
     'Alcanza Expectativas': { bg: '#92D050', fg: '#12280A' },
-    'Necesita Mejorar': { bg: '#F3F3C0', fg: '#3A3A00' },
+    'Necesita Mejorar': { bg: '#FFF06A', fg: '#3A3300' },
     'Crítico': { bg: '#DA0000', fg: '#000000' },
   };
   E.DEF = {

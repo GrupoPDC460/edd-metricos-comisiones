@@ -1,6 +1,6 @@
 import asyncio, os, subprocess, time, json, sys
 from playwright.async_api import async_playwright
-ROOT='/home/claude/edd'; OUTDIR='/home/claude/x/shots2'; OUT='/home/claude/x/shots2'; os.makedirs(OUT, exist_ok=True)
+ROOT='/home/claude/edd'; OUTDIR='/home/claude/x/shots2'; OUT='/home/claude/x/shots3'; os.makedirs(OUT, exist_ok=True)
 UP='/mnt/user-data/uploads/'
 srv = subprocess.Popen(['true'])
 time.sleep(1)
@@ -31,11 +31,11 @@ async def main():
         print('hash after login', await page.evaluate('location.hash'))
         await page.screenshot(path=OUT+'/02_importar.png')
         # subir archivos
-        files=[UP+f for f in os.listdir(UP) if f.endswith('.xlsx')]
+        files=[UP+f for f in os.listdir(UP) if f.endswith('.xlsx') and f!='Formato_EDD.xlsx']
         await page.set_input_files('input[type=file]', files)
-        await page.wait_for_timeout(800)
-        await page.screenshot(path=OUT+'/02b_archivos.png'); await page.click('text=Analizar archivos'); await page.wait_for_timeout(3000); await page.screenshot(path=OUT+'/02c_tras.png'); print('toasts', await page.inner_text('#toasts'))
-        await page.wait_for_selector('.pestanas', timeout=20000)
+        await page.wait_for_function("document.body.innerText.includes('archivo(s) listos')", timeout=120000)
+        await page.screenshot(path=OUT+'/02b_archivos.png'); await page.click('text=Analizar archivos'); await page.wait_for_selector('.pestanas', timeout=60000); await page.screenshot(path=OUT+'/02c_tras.png'); print('toasts', await page.inner_text('#toasts'))
+        await page.wait_for_selector('.pestanas', timeout=60000)
         await page.screenshot(path=OUT+'/03_resumen.png', full_page=True)
         for tab in ['Mapeo detectado','Equipos','Personas']:
             await page.click('.pestanas button:has-text("%s")'%tab); await page.wait_for_timeout(200)
@@ -52,6 +52,10 @@ async def main():
         await elegir('Mishelle', 'base predeterminada')
         await elegir('Giselle', 'Usar 22/09/2026')
         await elegir('Confirma quién sigue activo', 'Revisé la lista')
+        await elegir('Resultados anteriores', 'Incluirlos en la hoja')
+        await page.click('.pestanas button:has-text("Archivos EDD")'); await page.wait_for_timeout(300)
+        await page.screenshot(path=OUT+'/05b_archivos.png', full_page=True)
+        await page.click('.pestanas button:has-text("Dudas")'); await page.wait_for_timeout(200)
         await page.screenshot(path=OUT+'/05_dudas.png', full_page=True)
         await page.click('.pestanas button:has-text("Vista previa")'); await page.wait_for_timeout(300)
         await page.screenshot(path=OUT+'/06_guardar.png', full_page=True)
@@ -103,6 +107,12 @@ async def main():
         # Giselle garantía
         await page.evaluate("location.hash='#/planes'"); await page.wait_for_timeout(800)
         await page.screenshot(path=OUT+'/12_planes.png', full_page=True)
+        # directriz para varios equipos
+        await page.fill('textarea[placeholder^="Ej.: Rendición"]', 'Rendición de cuentas al 100%')
+        await page.click('button:has-text("Agregar a los equipos marcados")'); await page.wait_for_timeout(1500)
+        print('toast directriz:', await page.inner_text('#toasts'))
+        print('items Diego tras directriz:', await page.evaluate("EDD.evaluacion('2026-10','p-15523').d.items.map(i=>i.origen+':'+i.texto.slice(0,25))"))
+        print('Giselle (excepción):', await page.evaluate("EDD.evaluacion('2026-10','p-15872').d.items.map(i=>i.texto.slice(0,25))")); print('Heidi (cerrada) sin cambios:', await page.evaluate("EDD.evaluacion('2026-10','p-15547').d.items.length"))
         # aplicar plan EDD Chevere
         await page.locator('.hoja', has_text='Team Chévere').locator('button:has-text("Aplicar al equipo")').first.click(); await page.wait_for_timeout(400)
         await page.screenshot(path=OUT+'/13_aplicar.png')
@@ -136,9 +146,9 @@ async def main():
             await page.screenshot(path=OUT+'/18_%s.png'%r, full_page=True)
         # imagen combinada
         canv = await page.evaluate("""(async()=>{const p=EDD.persona('p-15547'); const c=EDD.render.unir([await EDD.render.edd(EDD.render.datosEdd('2026-10',p,'final')), await EDD.render.metricos(EDD.render.datosMet('2026-10',p,'final'))]); return c.toDataURL('image/png');})()""")
-        import base64; open('/home/claude/x/shots2/19_combinada.png','wb').write(base64.b64decode(canv.split(',')[1]))
+        import base64; open('/home/claude/x/shots3/19_combinada.png','wb').write(base64.b64decode(canv.split(',')[1]))
         canv = await page.evaluate("""(async()=>{const p=EDD.persona('p-15872'); const c=EDD.render.unir([await EDD.render.edd(EDD.render.datosEdd('2026-10',p,'inicial')), await EDD.render.metricos(EDD.render.datosMet('2026-10',p,'inicial'))]); return c.toDataURL('image/png');})()""")
-        open('/home/claude/x/shots2/20_inicial_giselle.png','wb').write(base64.b64decode(canv.split(',')[1]))
+        open('/home/claude/x/shots3/20_inicial_giselle.png','wb').write(base64.b64decode(canv.split(',')[1]))
         # mobile
         await page.set_viewport_size({'width':390,'height':844})
         await page.evaluate("location.hash='#/ficha/2026-10/p-15549/edd'"); await page.wait_for_timeout(700)

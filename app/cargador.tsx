@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 
 // Módulos de la aplicación (JavaScript del navegador en /public/edd). El orden importa.
 const MODULOS = ['core', 'excel', 'importar', 'render', 'ui', 'vistas-mes', 'vistas-ficha', 'vistas-datos', 'app'];
-const VERSION = '2026-10-21';
+const VERSION = '2026-10-22';
 
 declare global {
   interface Window { XLSX?: unknown; JSZip?: unknown; __eddCargado?: boolean }

@@ -76,7 +76,8 @@
   // ------------------------------------------------------------------ lectura de archivos (SheetJS)
   X.leer = async function (file) {
     const buf = await file.arrayBuffer();
-    const wb = XL().read(buf, { type: 'array', cellFormula: true, cellDates: false, cellNF: false });
+    // sheetRows: las plantillas EDD declaran filas hasta la 1,048,576; leer solo las primeras evita minutos de espera
+    const wb = XL().read(buf, { type: 'array', cellFormula: true, cellDates: false, cellNF: false, sheetRows: 600 });
     return { nombre: file.name, buf, wb, tipo: X.clasificar(wb) };
   };
   const valor = (ws, ref) => { const c = ws && ws[ref]; return c ? c.v : undefined; };
@@ -198,23 +199,62 @@
   };
 
   // Analiza la plantilla EDD individual (sin modificarla)
+  // Hojas con el diseño de "Plan de trabajo" (D11 = Resultado Evaluación) y cuál sirve de plantilla del mes
+  function hojasPlan(wb, hs) {
+    const cands = hs.filter(h => wb.Sheets[h.nombre] && E.norm(valor(wb.Sheets[h.nombre], 'D11')) === 'resultado evaluacion');
+    const mes = cands.find(h => h.oculta && /^mes/i.test(h.nombre)) || cands.find(h => h.oculta) || cands.find(h => /^mes/i.test(h.nombre)) || cands[0] || null;
+    return { cands, mes };
+  }
   X.analizarPlantilla = async function (archivo) {
     const wb = archivo.wb; const zip = await leerZip(archivo.buf); const hs = await hojasLibro(zip);
     const res = wb.Sheets['Resumen'];
-    const mensuales = hs.filter(h => !h.oculta && h.nombre !== 'Resumen').map(h => {
+    const hp = hojasPlan(wb, hs);
+    const mensuales = hp.cands.filter(h => h !== hp.mes).map(h => {
       const ws = wb.Sheets[h.nombre];
       const fecha = valor(ws, 'E5');
       const resultados = ['E6', 'E7', 'E8', 'E9', 'E10'].map(r => valor(ws, r)).filter(Boolean);
       return { nombre: h.nombre, fechaE5: typeof fecha === 'number' ? fechaDeSerial(fecha) : null, final: valor(ws, 'E11') || null, resultados: resultados.length };
     });
-    const plantillaMes = hs.find(h => h.oculta && wb.Sheets[h.nombre] && E.norm(valor(wb.Sheets[h.nombre], 'D11')) === 'resultado evaluacion');
+    const plantillaMes = hp.mes;
     return {
       archivo: archivo.nombre, hojas: hs.map(h => ({ nombre: h.nombre, oculta: h.oculta })),
       resumen: { codigo: valor(res, 'A6'), nombreGuardado: valor(res, 'B6'), rolGuardado: valor(res, 'C6') },
-      mensuales, plantillaMes: plantillaMes ? plantillaMes.nombre : null,
+      mensuales, plantillaMes: plantillaMes ? plantillaMes.nombre : null, plantillaOculta: !!(plantillaMes && plantillaMes.oculta),
       tieneVinculoExterno: !!zip.file('xl/externalLinks/externalLink1.xml') || Object.keys(zip.files).some(k => k.startsWith('xl/externalLinks/')),
       filasCriterios: 5,
     };
+  };
+
+  // Resultados de meses anteriores al inicio del sistema que trae un archivo EDD individual
+  X.historialPrevio = function (archivo, periodoInicial) {
+    const wb = archivo.wb; const res = wb.Sheets['Resumen'];
+    const RES = E.RESULTADOS.map(E.norm);
+    const valido = v => typeof v === 'string' && RES.includes(E.norm(v)) ? E.RESULTADOS[RES.indexOf(E.norm(v))] : null;
+    const meses = {};
+    const rango = XL().utils.decode_range(res['!ref'] || 'A1:A1');
+    for (let c = 3; c <= rango.e.c; c++) {
+      const h = valor(res, XL().utils.encode_cell({ r: 4, c }));
+      const m = /^([a-z]{3})-(\d{2})$/i.exec(String(h || '').trim());
+      if (!m) continue;
+      const mi = E.MES_ABR.indexOf(m[1].toLowerCase()); if (mi < 0) continue;
+      const id = E.periodo.id(2000 + Number(m[2]), mi + 1);
+      if (id >= periodoInicial) continue;
+      const v = valido(valor(res, XL().utils.encode_cell({ r: 5, c })));
+      if (v) (meses[id] = meses[id] || {}).resumen = v;
+    }
+    wb.SheetNames.forEach(n => {
+      const ws = wb.Sheets[n];
+      if (E.norm(valor(ws, 'D11')) !== 'resultado evaluacion') return;
+      const f = valor(ws, 'E5'); const v = valido(valor(ws, 'E11'));
+      if (!v) return;
+      const fecha = typeof f === 'number' ? fechaDeSerial(f) : null;
+      if (!fecha) { (meses['?'] = meses['?'] || { sinFecha: [] }).sinFecha.push({ hoja: n, valor: v }); return; }
+      const id = fecha.slice(0, 7);
+      if (id >= periodoInicial) return;
+      (meses[id] = meses[id] || {}).hoja = { nombre: n, valor: v };
+    });
+    const sinFecha = meses['?'] ? meses['?'].sinFecha : []; delete meses['?'];
+    return { archivo: archivo.nombre, codigo: Number(valor(res, 'A6')) || Number((/^(\d{3,6})/.exec(archivo.nombre) || [])[1]) || null, nombreGuardado: valor(res, 'B6') || '', meses, sinFecha };
   };
 
   // ------------------------------------------------------------------ limpieza de la plantilla
@@ -222,10 +262,11 @@
   X.limpiarPlantilla = async function (buf) {
     const zip = await leerZip(buf);
     const hs = await hojasLibro(zip);
+    const libro = XL().read(buf, { type: 'array', sheetRows: 12 });
     const resumen = hs.find(h => h.nombre === 'Resumen');
-    const mes = hs.find(h => h.oculta && /mes/i.test(h.nombre)) || hs.find(h => h.oculta && h.nombre !== 'Resumen');
-    if (!resumen || !mes) throw new Error('La plantilla no tiene las hojas "Resumen" y la hoja oculta de mes (Mes- Año).');
-    const quitar = hs.filter(h => !h.oculta && h.nombre !== 'Resumen');
+    const { cands, mes } = hojasPlan(libro, hs);
+    if (!resumen || !mes) throw new Error('La plantilla no tiene la hoja "Resumen" y una hoja "Plan de trabajo" (Mes- Año).');
+    const quitar = cands.filter(h => h !== mes);
     let wb = await leerTxt(zip, 'xl/workbook.xml');
     let wbRels = await leerTxt(zip, 'xl/_rels/workbook.xml.rels');
     let ct = await leerTxt(zip, '[Content_Types].xml');
@@ -250,6 +291,7 @@
         wbRels = wbRels.replace(new RegExp('<Relationship [^>]*Id="' + r.Id + '"[^>]*/>'), '');
       }
     }
+    if (!mes.oculta) { const tag2 = mes.tag.replace(/\s*\/>$/, ' state="hidden"/>'); wb = wb.replace(mes.tag, tag2); }
     wb = wb.replace(/<externalReferences>[\s\S]*?<\/externalReferences>/, '').replace(/<mc:AlternateContent[^>]*>\s*<mc:Choice Requires="x15">\s*<x15ac:absPath[\s\S]*?<\/mc:AlternateContent>/, '');
     wb = wb.replace(/<calcPr\b[^>]*\/>/, m => m.includes('fullCalcOnLoad') ? m : m.replace('/>', ' fullCalcOnLoad="1"/>'));
     // nombres definidos: solo se conservan los de hojas que quedan (se regeneran al exportar)
@@ -257,7 +299,7 @@
     // 3) Resumen: sin datos de la persona ni fórmulas a otros libros
     let rx = await leerTxt(zip, resumen.ruta);
     ['A6', 'B6', 'C6'].forEach(ref => { rx = ponerCelda(rx, ref, cVacia(ref)); });
-    rx = rx.replace(/<c r="([A-Z]+)6"([^>]*?)(?:\st="[^"]*")?([^>]*)>\s*<f>[^<]*<\/f>\s*(?:<v>[^<]*<\/v>)?\s*<\/c>/g, (m, c, a1, a2) => '<c r="' + c + '6"' + (a1 + a2).replace(/\st="[^"]*"/, '') + '/>');
+    rx = rx.replace(/<row r="6"([^>]*)>([\s\S]*?)<\/row>/, (m, a, cuerpo) => '<row r="6"' + a + '>' + cuerpo.replace(/<c r="([A-Z]+)6"[^>]*?(\/>|>[\s\S]*?<\/c>)/g, (c, col) => colNum(col) >= 4 ? '<c r="' + col + '6"' + sAttr(estiloDe(c)) + '/>' : c) + '</row>');
     zip.file(resumen.ruta, rx);
     const relRes = parseRels(await leerTxt(zip, relsDe(resumen.ruta)));
     for (const r of relRes.filter(r => /table/.test(r.Type))) {
@@ -345,7 +387,7 @@
   const lineas = (txt, cpl) => String(txt || '').split('\n').reduce((n, p) => n + Math.max(1, Math.ceil(p.length / cpl)), 0);
 
   // Genera el libro de una persona. hojasDatos: [{periodo, items:[{texto, resultado}], final, comentarios, confirmado}]
-  X.generarLibro = async function (tplBase64, persona, hojasDatos) {
+  X.generarLibro = async function (tplBase64, persona, hojasDatos, previo) {
     const zip = await ZIP().loadAsync(tplBase64, { base64: true });
     const hs = await hojasLibro(zip);
     const resumen = hs.find(h => h.nombre === 'Resumen');
@@ -434,6 +476,10 @@
     rx = ponerCelda(rx, 'B6', cTexto('B6', persona.nombre));
     rx = ponerCelda(rx, 'C6', cTexto('C6', persona.rol || ''));
     const cabeceras = await mesesResumen(zip, rx);
+    Object.entries(previo || {}).forEach(([per, x]) => {
+      const col = cabeceras[E.periodo.corto(per)];
+      if (col && x && x.resultado && !nuevas.some(nh => nh.hd.periodo === per)) rx = ponerCelda(rx, col + '6', cTexto(col + '6', x.resultado));
+    });
     for (const nh of nuevas) {
       if (!nh.hd.confirmado || !nh.hd.final) continue;
       const col = cabeceras[E.periodo.corto(nh.hd.periodo)];

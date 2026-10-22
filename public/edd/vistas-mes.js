@@ -166,6 +166,7 @@
         const r = E.copiaRec(periodo); r.d.num_planes = n; await E.guardar('periodos', [r], 'cantidad de planes'); E.toast('Cantidad de planes guardada.'); A.refrescar();
       }, '', { disabled: cerrado })))));
     const equipos = E.equipos().filter(e => e.d.activo !== false);
+    if (equipos.length) root.append(directrizGeneral(per, equipos, cerrado));
     if (!equipos.length) root.append(U.vacio('No hay equipos', 'Crea los equipos en Padrón o importa el Formato EDD.', U.btn('Ir a Padrón', () => { location.hash = '#/padron'; })));
     equipos.forEach(eq => root.append(tarjetaEquipo(per, eq, periodo, cerrado)));
     root.append(seccionGarantia(per));
@@ -174,6 +175,55 @@
       U.tabla([{ t: 'Persona' }, { t: 'EDD' }, { t: 'Métricos' }], sinEquipo.map(p => h('tr', { class: 'clic', onclick: () => { location.hash = '#/ficha/' + per + '/' + p.id; } },
         h('td', null, h('span', { class: 'nombre' }, p.d.nombre), h('span', { class: 'sub' }, p.d.codigo || '')), h('td', null, U.chip(E.calc.estadoEdd(E.evaluacion(per, p.id)))), h('td', null, U.chip(E.calc.estadoMet(E.metricos(per, p.id)))))))));
   };
+
+  // Una misma directriz para todos los equipos o solo para los de un supervisor
+  function directrizGeneral(per, equipos, cerrado) {
+    const cfg = E.conf();
+    const marcados = new Set(equipos.map(e => e.id));
+    const ta = h('textarea', { class: 'campo', rows: 2, placeholder: 'Ej.: Rendición de cuentas al 100%', disabled: cerrado });
+    const aplicarYa = h('input', { type: 'checkbox', checked: true, disabled: cerrado });
+    const aExcepciones = h('input', { type: 'checkbox', checked: true, disabled: cerrado });
+    const lista = h('div', { class: 'acciones' }, equipos.map(e => h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: true, disabled: cerrado, onchange: ev => { if (ev.target.checked) marcados.add(e.id); else marcados.delete(e.id); } }),
+      e.d.nombre + (e.d.supervisor_id ? ' · ' + E.nombrePersona(e.d.supervisor_id) : ''))));
+    return h('div', { class: 'hoja' }, h('h2', null, 'Directriz para varios equipos'),
+      h('p', null, 'Agrega una misma directriz al plan EDD de todos los equipos o solo de los equipos de un supervisor. Se suma al plan común de cada equipo marcado.'),
+      U.campo('Directriz', ta), h('div', { style: { margin: '10px 0' } }, lista),
+      h('label', { class: 'check', style: { display: 'flex', marginBottom: '6px' } }, aplicarYa, 'Aplicarla de una vez a los integrantes (las evaluaciones cerradas no se tocan)'),
+      h('label', { class: 'check', style: { display: 'flex', marginBottom: '10px' } }, aExcepciones, 'Agregarla también a quienes tienen plan individual (se suma a su plan sin quitar lo demás)'),
+      U.btn('Agregar a los equipos marcados', async () => {
+        const texto = ta.value.trim();
+        if (!texto) { ta.classList.add('err'); throw new Error('Escribe la directriz.'); }
+        if (!marcados.size) throw new Error('Marca al menos un equipo.');
+        const recs = [], omitidos = [];
+        equipos.filter(e => marcados.has(e.id)).forEach(e => {
+          const id = E.idPlan(per, e.id, 'edd'); const rec = E.db.planes.get(id);
+          const r = rec ? E.copiaRec(rec) : { id, d: { periodo_id: per, equipo_id: e.id, tipo: 'edd', items: [] } };
+          if (r.d.items.some(i => E.norm(i.texto) === E.norm(texto))) { omitidos.push(e.d.nombre + ': ya la tiene'); return; }
+          if (r.d.items.length >= cfg.planes_max) { omitidos.push(e.d.nombre + ': su plan ya tiene ' + cfg.planes_max + ' directrices'); return; }
+          r.d.items.push({ id: 'e' + E.uid(), texto }); recs.push(r);
+        });
+        await E.guardar('planes', recs, 'directriz para varios equipos');
+        let personas = 0;
+        if (aplicarYa.checked) for (const r of recs) {
+          const filas = O.previaAplicar(per, r.d.equipo_id, 'edd');
+          personas += await O.aplicarPlan(per, r.d.equipo_id, 'edd', filas, new Set());
+          const nuevo = r.d.items[r.d.items.length - 1];
+          const exc = [];
+          filas.filter(f => f.estado === 'excepcion' || f.estado === 'excede').forEach(f => {
+            if (!aExcepciones.checked) { omitidos.push(f.p.d.nombre + ': tiene plan individual (no se modificó)'); return; }
+            const ev = E.evaluacion(per, f.p.id); if (!ev || ev.d.cierre) return;
+            if (ev.d.items.some(i => E.norm(i.texto) === E.norm(texto))) return;
+            if (ev.d.items.length >= cfg.planes_max) { omitidos.push(f.p.d.nombre + ': su plan ya tiene ' + cfg.planes_max + ' directrices'); return; }
+            const c = E.copiaRec(ev); c.d.items.push({ id: nuevo.id, texto: nuevo.texto, origen: 'equipo', resultado: null }); exc.push(c);
+          });
+          filas.filter(f => f.estado === 'cerrado').forEach(f => omitidos.push(f.p.d.nombre + ': su evaluación ya está cerrada'));
+          if (exc.length) { await E.guardar('evaluaciones', exc, 'directriz para varios equipos'); personas += exc.length; }
+        }
+        E.toast('Directriz agregada a ' + recs.length + ' equipo(s)' + (aplicarYa.checked ? ' y aplicada a ' + personas + ' persona(s).' : '. Aplícala a cada equipo cuando quieras.'));
+        if (omitidos.length) E.modal({ titulo: 'Equipos no modificados', cuerpo: h('ul', { class: 'lista-simple' }, omitidos.map(x => h('li', null, x))) });
+        A.refrescar();
+      }, 'primario', { disabled: cerrado }));
+  }
 
   async function alternarMes(per) {
     const r = E.copiaRec(E.db.periodos.get(per));

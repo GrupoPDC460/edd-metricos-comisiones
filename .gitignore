@@ -6,3 +6,4 @@ out/
 *.log
 .vercel
 test/node_modules/
+test/node_modules

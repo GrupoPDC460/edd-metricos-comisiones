@@ -11,7 +11,9 @@ Plataforma web para el equipo de **Cobros Venta Directa**. Reemplaza el trabajo 
 - **Historial** por mes y acumulado (solo periodos confirmados) y **registro de cambios** (quién, cuándo, qué).
 - **Exportación a Excel** con la plantilla EDD original (hoja Resumen + una hoja por mes, p. ej. "Octubre-2026"), individual o en **ZIP** (un archivo por gestor).
 - **Imágenes** de EDD y métricos (inicial / final / combinada) para copiar o descargar, y **mensajes de WhatsApp Business** por gestor.
-- **Importación** del Formato EDD, la plantilla individual y los archivos de métricos con vista previa del mapeo, datos interpretados y dudas que el usuario decide antes de guardar.
+- **Directriz para varios equipos**: una misma directriz (p. ej. "Rendición de cuentas al 100%") para todos los equipos o solo los de un supervisor, aplicada de una vez.
+- **Historial anterior al sistema**: los resultados previos a octubre 2026 que traen los archivos EDD individuales pueden escribirse en la hoja Resumen (con revisión y decisiones en la importación).
+- **Importación** del Formato EDD, los archivos EDD individuales (uno sirve de plantilla maestra) y los archivos de métricos con vista previa del mapeo, datos interpretados y dudas que el usuario decide antes de guardar.
 
 ## Arquitectura
 
